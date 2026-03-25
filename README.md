@@ -170,5 +170,6 @@ Contributions welcome:
 
 ## 🔗 Links
 
+- **GitHub Pages**: https://zengbiaojie.github.io/SentrySkills/
 - **Issues**: https://github.com/AI45Lab/SentrySkills/issues
 - **Documentation**: [install/](install/)

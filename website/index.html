@@ -371,10 +371,6 @@
       <div class="stat-label" data-i18n="stat.predictors">Risk Predictors</div>
     </div>
     <div class="stat">
-      <div class="stat-num">~80ms</div>
-      <div class="stat-label" data-i18n="stat.latency">Avg Latency</div>
-    </div>
-    <div class="stat">
       <div class="stat-num">0</div>
       <div class="stat-label" data-i18n="stat.deps">External Deps</div>
     </div>
@@ -466,11 +462,6 @@
         <div class="feature-icon">📦</div>
         <div class="feature-title" data-i18n="feat.2.title">Zero External Dependencies</div>
         <div class="feature-desc" data-i18n="feat.2.desc">100% Python standard library. No pip install, no Docker, no Redis. Copy the files and it runs — perfect for air-gapped or restricted environments.</div>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">⚡</div>
-        <div class="feature-title" data-i18n="feat.3.title">~80ms Latency</div>
-        <div class="feature-desc" data-i18n="feat.3.desc">Pure rule-based matching engine. No additional LLM API calls during detection. Fast enough to run on every single task without noticeable overhead.</div>
       </div>
       <div class="feature-card">
         <div class="feature-icon">🔮</div>
@@ -681,7 +672,6 @@ const i18n = {
     'hero.cta2': 'View on GitHub →',
     'stat.rules': 'Detection Rules',
     'stat.predictors': 'Risk Predictors',
-    'stat.latency': 'Avg Latency',
     'stat.deps': 'External Deps',
     'how.tag': 'Execution Flow',
     'how.title': 'How SentrySkills Works',
@@ -702,8 +692,6 @@ const i18n = {
     'feat.1.desc': 'Security is encoded as agent behavior, not bolted on externally. The agent understands and enforces its own safety rules through SKILL.md and AGENTS.md.',
     'feat.2.title': 'Zero External Dependencies',
     'feat.2.desc': '100% Python standard library. No pip install, no Docker, no Redis. Copy the files and it runs — perfect for air-gapped or restricted environments.',
-    'feat.3.title': '~80ms Latency',
-    'feat.3.desc': 'Pure rule-based matching engine. No additional LLM API calls during detection. Fast enough to run on every single task without noticeable overhead.',
     'feat.4.title': 'Predictive Analysis',
     'feat.4.desc': '7 risk predictors warn about threats before they materialize — resource exhaustion, privilege escalation, data exfiltration paths, multi-turn grooming, and more.',
     'feat.5.title': 'Full Traceability',
@@ -776,7 +764,6 @@ const i18n = {
     'hero.cta2': '查看 GitHub →',
     'stat.rules': '检测规则',
     'stat.predictors': '风险预测器',
-    'stat.latency': '平均延迟',
     'stat.deps': '外部依赖',
     'how.tag': '执行流程',
     'how.title': 'SentrySkills 如何运行',
@@ -797,8 +784,6 @@ const i18n = {
     'feat.1.desc': '安全能力被编码为 Agent 的行为模式，而非外部附加。Agent 通过 SKILL.md 和 AGENTS.md 理解并执行自身的安全规则。',
     'feat.2.title': '零外部依赖',
     'feat.2.desc': '100% Python 标准库实现，无需 pip install、Docker、Redis。复制文件即可运行，完美适配离线或受限环境。',
-    'feat.3.title': '~80ms 低延迟',
-    'feat.3.desc': '纯规则匹配引擎，检测过程中无额外 LLM API 调用。对每个任务运行安全检查都足够快，不影响用户体验。',
     'feat.4.title': '预测式风险分析',
     'feat.4.desc': '7 项风险预测器在危险发生前提前预警——资源耗尽、权限提升、数据外渗路径、多轮诱导等。',
     'feat.5.title': '全流程可追溯',

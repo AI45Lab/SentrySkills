@@ -95,30 +95,30 @@ SentrySkills is a **multi-skill orchestration package** that executes in a speci
 │  2. sentryskills-orchestrator (Coordination)                │
 │     ├─ Manages execution sequence                           │
 │     ├─ Aggregates results from all stages                   │
-│     └─ Makes final allow/downgrade/block decision          │
+│     └─ Makes final allow/downgrade/block decision           │
 ├─────────────────────────────────────────────────────────────┤
 │  3. sentryskills-preflight (Pre-Execution)                  │
 │     ├─ BEFORE any action is taken                           │
 │     ├─ Analyzes user prompt for malicious intent            │
 │     ├─ Checks planned actions against detection rules       │
-│     └─ Returns: block/allow with matched threats           │
+│     └─ Returns: block/allow with matched threats            │
 ├─────────────────────────────────────────────────────────────┤
 │  4. sentryskills-runtime (During Execution)                 │
 │     ├─ WHILE agent executes commands/tool calls             │
 │     ├─ Monitors runtime events (file ops, network calls)    │
 │     ├─ Detects behavioral anomalies                         │
-│     └─ Returns: continue/alert/abort                       │
+│     └─ Returns: continue/alert/abort                        │
 ├─────────────────────────────────────────────────────────────┤
 │  5. sentryskills-output (Post-Execution)                    │
 │     ├─ BEFORE agent outputs response                        │
 │     ├─ Scans response for sensitive data                    │
 │     ├─ Redacts secrets, credentials, private keys           │
-│     └─ Returns: safe/redacted response                     │
+│     └─ Returns: safe/redacted response                      │
 ├─────────────────────────────────────────────────────────────┤
 │  6. Orchestrator Final Decision                             │
 │     ├─ Compiles all stage results                           │
 │     ├─ Applies policy profile (balanced/strict/permissive)  │
-│     └─ Outputs final action + trace ID                     │
+│     └─ Outputs final action + trace ID                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -126,10 +126,10 @@ SentrySkills is a **multi-skill orchestration package** that executes in a speci
 
 ```
 Preflight BLOCK → → → → → → → → → → → → → → → → → → → ┐
-       ↓                                                  │
-      ALLOW                                              │
-       ↓                                                  │
-Runtime CONTINUE ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ┘
+       ↓                                              │
+      ALLOW                                           │
+       ↓                                              │
+Runtime CONTINUE ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←┘
        ↓
     ALERT/ABORT → BLOCK
        ↓

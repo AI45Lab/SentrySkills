@@ -1,5 +1,5 @@
 ---
-name: sentry-skills
+name: sentryskills
 description: SentrySkills - Automatic security guard that runs on EVERY task. Protects against prompt injection, data leaks, unsafe commands, and code vulnerabilities with zero external dependencies.
 license: MIT-0
 ---

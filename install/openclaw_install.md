@@ -23,7 +23,7 @@ clawhub --version
 clawhub search "sentry skills security"
 
 # Install SentrySkills
-clawhub install sentry-skills
+clawhub install sentryskills
 ```
 
 By default, ClawHub installs skills to `./skills/` in your current working directory.
@@ -119,18 +119,18 @@ cat ./skills/sentry-skills/SKILL.md
 ## Updating
 
 ```bash
-clawhub update sentry-skills
+clawhub update sentryskills
 ```
 
 Or reinstall:
 ```bash
-clawhub install sentry-skills --force
+clawhub install sentryskills --force
 ```
 
 ## Uninstalling
 
 ```bash
-clawhub uninstall sentry-skills
+clawhub uninstall sentryskills
 ```
 
 Optionally remove AGENTS.md configuration:

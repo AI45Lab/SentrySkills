@@ -28,7 +28,7 @@ SentrySkills protects AI agents from:
 npm i -g clawhub
 
 # Install SentrySkills
-clawhub install sentry-skills
+clawhub install sentryskills
 
 # Enable auto-protection
 cat > ~/.codex/AGENTS.md << 'EOF'

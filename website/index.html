@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SentrySkills – LLM-Native Self-Guard for AI Agents</title>
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --bg2: #0f1526;
+      --bg3: #151c30;
+      --border: #1e2a42;
+      --accent: #3b82f6;
+      --accent2: #6366f1;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --text: #e2e8f0;
+      --text2: #94a3b8;
+      --text3: #64748b;
+      --mono: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem; height: 60px;
+      background: rgba(10,14,26,.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: .5rem;
+      font-weight: 700; font-size: 1.1rem; color: var(--text);
+      text-decoration: none;
+    }
+    .nav-logo .shield { font-size: 1.4rem; }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a {
+      color: var(--text2); text-decoration: none; font-size: .9rem;
+      transition: color .2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .lang-btn {
+      display: flex; align-items: center; gap: .4rem;
+      padding: .35rem .8rem; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg3);
+      color: var(--text2); font-size: .85rem; cursor: pointer;
+      transition: all .2s;
+    }
+    .lang-btn:hover { border-color: var(--accent); color: var(--text); }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      padding: 5rem 2rem 4rem;
+      position: relative; overflow: hidden;
+    }
+    .hero-grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: .3;
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black, transparent);
+    }
+    .hero-glow {
+      position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 300px;
+      background: radial-gradient(ellipse, rgba(59,130,246,.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      padding: .3rem .9rem; border-radius: 99px;
+      border: 1px solid rgba(59,130,246,.3);
+      background: rgba(59,130,246,.08);
+      color: #93c5fd; font-size: .8rem; margin-bottom: 1.5rem;
+      position: relative;
+    }
+    .badge-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+    h1 {
+      font-size: clamp(2.2rem, 5vw, 3.8rem);
+      font-weight: 800; line-height: 1.15;
+      margin-bottom: 1.2rem; position: relative;
+    }
+    h1 .accent {
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .hero-sub {
+      font-size: 1.15rem; color: var(--text2);
+      max-width: 600px; margin-bottom: 2.5rem; position: relative;
+    }
+    .hero-actions { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; position: relative; }
+    .btn-primary {
+      padding: .7rem 1.6rem; border-radius: 8px;
+      background: var(--accent); color: #fff;
+      font-weight: 600; font-size: .95rem;
+      text-decoration: none; transition: all .2s;
+      border: none; cursor: pointer;
+    }
+    .btn-primary:hover { background: #2563eb; transform: translateY(-1px); }
+    .btn-secondary {
+      padding: .7rem 1.6rem; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg3);
+      color: var(--text); font-weight: 600; font-size: .95rem;
+      text-decoration: none; transition: all .2s; cursor: pointer;
+    }
+    .btn-secondary:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+    .hero-stats {
+      display: flex; gap: 3rem; margin-top: 4rem;
+      position: relative;
+    }
+    .stat { text-align: center; }
+    .stat-num {
+      font-size: 1.8rem; font-weight: 800;
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .stat-label { font-size: .8rem; color: var(--text3); margin-top: .2rem; }
+
+    /* ── SECTIONS ── */
+    section { padding: 5rem 2rem; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    .section-tag {
+      display: inline-block;
+      padding: .2rem .7rem; border-radius: 4px;
+      background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.2);
+      color: #93c5fd; font-size: .75rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .05em;
+      margin-bottom: .8rem;
+    }
+    h2 {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 700; margin-bottom: .8rem;
+    }
+    .section-sub { color: var(--text2); font-size: 1rem; max-width: 560px; }
+
+    /* ── HOW IT WORKS ── */
+    .how-bg { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .flow-grid {
+      display: flex; flex-direction: column; gap: 0;
+      margin-top: 3rem;
+    }
+    .flow-item {
+      display: grid; grid-template-columns: 60px 1fr;
+      gap: 1.5rem; align-items: start;
+      padding: 1.5rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .flow-item:last-child { border-bottom: none; }
+    .flow-num {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 1rem;
+      flex-shrink: 0;
+    }
+    .flow-num.entry    { background: rgba(59,130,246,.15); color: #60a5fa; border: 1px solid rgba(59,130,246,.3); }
+    .flow-num.orch     { background: rgba(99,102,241,.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,.3); }
+    .flow-num.pre      { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); }
+    .flow-num.run      { background: rgba(239,68,68,.15);  color: #fca5a5; border: 1px solid rgba(239,68,68,.3); }
+    .flow-num.out      { background: rgba(34,197,94,.15);  color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+    .flow-title { font-weight: 700; font-size: 1rem; margin-bottom: .3rem; }
+    .flow-name { font-family: var(--mono); font-size: .8rem; color: var(--text3); margin-bottom: .5rem; }
+    .flow-desc { font-size: .9rem; color: var(--text2); }
+    .flow-tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+    .tag {
+      padding: .15rem .5rem; border-radius: 4px;
+      font-size: .75rem; font-family: var(--mono);
+      background: var(--bg3); border: 1px solid var(--border); color: var(--text3);
+    }
+    .tag.allow  { background: rgba(34,197,94,.1);  border-color: rgba(34,197,94,.3);  color: #86efac; }
+    .tag.block  { background: rgba(239,68,68,.1);  border-color: rgba(239,68,68,.3);  color: #fca5a5; }
+    .tag.down   { background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.3); color: #fcd34d; }
+
+    /* ── FEATURES ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.2rem; margin-top: 3rem;
+    }
+    .feature-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.5rem;
+      transition: border-color .2s, transform .2s;
+    }
+    .feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .feature-icon { font-size: 1.6rem; margin-bottom: .8rem; }
+    .feature-title { font-weight: 700; margin-bottom: .4rem; }
+    .feature-desc { font-size: .9rem; color: var(--text2); }
+
+    /* ── DETECTION ── */
+    .detection-bg { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .detection-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem; margin-top: 3rem;
+    }
+    .detect-card {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1.2rem;
+    }
+    .detect-header {
+      display: flex; align-items: center; gap: .6rem;
+      font-weight: 700; margin-bottom: .8rem; font-size: .95rem;
+    }
+    .detect-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .detect-list { list-style: none; }
+    .detect-list li {
+      font-size: .85rem; color: var(--text2);
+      padding: .2rem 0;
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .detect-list li::before { content: '›'; color: var(--text3); }
+
+    /* ── INSTALL ── */
+    .install-tabs {
+      display: flex; gap: .5rem; margin-top: 2.5rem; margin-bottom: 1.5rem;
+    }
+    .tab-btn {
+      padding: .4rem 1rem; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg3);
+      color: var(--text2); font-size: .85rem; cursor: pointer;
+      transition: all .2s;
+    }
+    .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .code-block {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 10px; overflow: hidden;
+    }
+    .code-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .6rem 1rem; border-bottom: 1px solid var(--border);
+      background: var(--bg3);
+    }
+    .code-title { font-size: .8rem; color: var(--text3); font-family: var(--mono); }
+    .copy-btn {
+      font-size: .75rem; color: var(--text3);
+      background: none; border: none; cursor: pointer;
+      transition: color .2s; padding: .2rem .5rem;
+    }
+    .copy-btn:hover { color: var(--text); }
+    pre {
+      padding: 1.2rem 1.5rem;
+      font-family: var(--mono); font-size: .85rem;
+      line-height: 1.7; overflow-x: auto;
+    }
+    .c-comment { color: #475569; }
+    .c-cmd     { color: #93c5fd; }
+    .c-flag    { color: #a5b4fc; }
+    .c-str     { color: #86efac; }
+    .c-key     { color: #fcd34d; }
+
+    /* ── POLICY ── */
+    .policy-cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem; margin-top: 3rem;
+    }
+    .policy-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1.3rem;
+      transition: border-color .2s;
+    }
+    .policy-card:hover { border-color: #475569; }
+    .policy-badge {
+      display: inline-block; padding: .2rem .6rem;
+      border-radius: 4px; font-size: .75rem; font-weight: 700;
+      margin-bottom: .8rem; font-family: var(--mono);
+    }
+    .policy-badge.balanced { background: rgba(59,130,246,.15); color: #60a5fa; }
+    .policy-badge.strict   { background: rgba(239,68,68,.15);  color: #fca5a5; }
+    .policy-badge.permissive { background: rgba(34,197,94,.15); color: #86efac; }
+    .policy-title { font-weight: 700; margin-bottom: .4rem; }
+    .policy-desc  { font-size: .85rem; color: var(--text2); }
+    .policy-use   { font-size: .8rem; color: var(--text3); margin-top: .5rem; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 2rem;
+      text-align: center; color: var(--text3); font-size: .85rem;
+    }
+    footer a { color: var(--text2); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+    .footer-links { display: flex; gap: 1.5rem; justify-content: center; margin-bottom: 1rem; flex-wrap: wrap; }
+
+    @media (max-width: 640px) {
+      .hero-stats { gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
+      nav { padding: 0 1rem; }
+      .nav-links { gap: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="#">
+    <span class="shield">🛡️</span>
+    <span>SentrySkills</span>
+  </a>
+  <div class="nav-links">
+    <a href="#how-it-works" data-i18n="nav.how">How It Works</a>
+    <a href="#detection" data-i18n="nav.detection">Detection</a>
+    <a href="#install" data-i18n="nav.install">Install</a>
+    <a href="https://github.com/zengbiaojie/SentrySkills" target="_blank">GitHub</a>
+    <button class="lang-btn" id="langToggle" onclick="toggleLang()">
+      <span id="langIcon">🌐</span>
+      <span id="langLabel">中文</span>
+    </button>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+  <div class="badge">
+    <span class="badge-dot"></span>
+    <span data-i18n="badge">Open Source · MIT-0 · Zero Dependencies</span>
+  </div>
+  <h1>
+    <span data-i18n="hero.title1">Self-Guarding Security</span><br>
+    <span class="accent" data-i18n="hero.title2">for AI Agents</span>
+  </h1>
+  <p class="hero-sub" data-i18n="hero.sub">
+    LLM-native skill package that teaches agents to protect themselves.
+    Three-stage protection — preflight, runtime, output — driven by the agent's own intelligence.
+  </p>
+  <div class="hero-actions">
+    <a class="btn-primary" href="#install" data-i18n="hero.cta1">Get Started</a>
+    <a class="btn-secondary" href="https://github.com/zengbiaojie/SentrySkills" target="_blank" data-i18n="hero.cta2">View on GitHub →</a>
+  </div>
+  <div class="hero-stats">
+    <div class="stat">
+      <div class="stat-num">33+</div>
+      <div class="stat-label" data-i18n="stat.rules">Detection Rules</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">7</div>
+      <div class="stat-label" data-i18n="stat.predictors">Risk Predictors</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">~80ms</div>
+      <div class="stat-label" data-i18n="stat.latency">Avg Latency</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">0</div>
+      <div class="stat-label" data-i18n="stat.deps">External Deps</div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how-bg" id="how-it-works">
+  <div class="container">
+    <div class="section-tag" data-i18n="how.tag">Execution Flow</div>
+    <h2 data-i18n="how.title">How SentrySkills Works</h2>
+    <p class="section-sub" data-i18n="how.sub">Five skills fire in sequence. Each stage passes or blocks before the next begins. Any block terminates immediately.</p>
+
+    <div class="flow-grid">
+      <div class="flow-item">
+        <div class="flow-num entry">①</div>
+        <div>
+          <div class="flow-title" data-i18n="flow.1.title">Entry Point</div>
+          <div class="flow-name">using-sentryskills</div>
+          <div class="flow-desc" data-i18n="flow.1.desc">Auto-triggered via AGENTS.md before every response. Prepares the input context — user prompt, planned actions, candidate response — then hands off to the orchestrator.</div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num orch">②</div>
+        <div>
+          <div class="flow-title" data-i18n="flow.2.title">Orchestration</div>
+          <div class="flow-name">sentryskills-orchestrator</div>
+          <div class="flow-desc" data-i18n="flow.2.desc">Coordinates the full pipeline. Aggregates results from all stages, applies the active policy profile, and produces the final decision with a shared trace ID.</div>
+          <div class="flow-tags">
+            <span class="tag allow">allow</span>
+            <span class="tag down">downgrade</span>
+            <span class="tag block">block</span>
+          </div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num pre">③</div>
+        <div>
+          <div class="flow-title" data-i18n="flow.3.title">Preflight Check</div>
+          <div class="flow-name">sentryskills-preflight</div>
+          <div class="flow-desc" data-i18n="flow.3.desc">Runs <strong>before</strong> any action. Analyzes user intent and planned operations against 33+ detection rules. Detects prompt injection, malicious commands, and suspicious patterns.</div>
+          <div class="flow-tags">
+            <span class="tag">pre-execution</span>
+            <span class="tag">intent analysis</span>
+            <span class="tag">33+ rules</span>
+          </div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num run">④</div>
+        <div>
+          <div class="flow-title" data-i18n="flow.4.title">Runtime Monitor</div>
+          <div class="flow-name">sentryskills-runtime</div>
+          <div class="flow-desc" data-i18n="flow.4.desc">Watches <strong>during</strong> execution. Tracks tool calls, file operations, network requests. Flags behavioral anomalies and unexpected scope expansion in real time.</div>
+          <div class="flow-tags">
+            <span class="tag">behavioral analysis</span>
+            <span class="tag">scope detection</span>
+          </div>
+        </div>
+      </div>
+      <div class="flow-item">
+        <div class="flow-num out">⑤</div>
+        <div>
+          <div class="flow-title" data-i18n="flow.5.title">Output Guard</div>
+          <div class="flow-name">sentryskills-output</div>
+          <div class="flow-desc" data-i18n="flow.5.desc">Scans the response <strong>before</strong> it's sent. Automatically redacts secrets, credentials, API keys, and private data. Prevents sensitive information from leaking through the agent's output.</div>
+          <div class="flow-tags">
+            <span class="tag">redaction</span>
+            <span class="tag">leak prevention</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="container">
+    <div class="section-tag" data-i18n="feat.tag">Key Features</div>
+    <h2 data-i18n="feat.title">Built for Production</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <div class="feature-title" data-i18n="feat.1.title">LLM-Native Design</div>
+        <div class="feature-desc" data-i18n="feat.1.desc">Security is encoded as agent behavior, not bolted on externally. The agent understands and enforces its own safety rules through SKILL.md and AGENTS.md.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <div class="feature-title" data-i18n="feat.2.title">Zero External Dependencies</div>
+        <div class="feature-desc" data-i18n="feat.2.desc">100% Python standard library. No pip install, no Docker, no Redis. Copy the files and it runs — perfect for air-gapped or restricted environments.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title" data-i18n="feat.3.title">~80ms Latency</div>
+        <div class="feature-desc" data-i18n="feat.3.desc">Pure rule-based matching engine. No additional LLM API calls during detection. Fast enough to run on every single task without noticeable overhead.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔮</div>
+        <div class="feature-title" data-i18n="feat.4.title">Predictive Analysis</div>
+        <div class="feature-desc" data-i18n="feat.4.desc">7 risk predictors warn about threats before they materialize — resource exhaustion, privilege escalation, data exfiltration paths, multi-turn grooming, and more.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🗂️</div>
+        <div class="feature-title" data-i18n="feat.5.title">Full Traceability</div>
+        <div class="feature-desc" data-i18n="feat.5.desc">Every decision is logged to ./sentry_skill_log/ as JSONL. Each stage shares a trace ID, making post-incident analysis and compliance auditing straightforward.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🎛️</div>
+        <div class="feature-title" data-i18n="feat.6.title">Flexible Policies</div>
+        <div class="feature-desc" data-i18n="feat.6.desc">Three built-in profiles: Balanced for production, Strict for high-sensitivity data, Permissive for development. Custom rules via JSON, hot-reloadable.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DETECTION -->
+<section class="detection-bg" id="detection">
+  <div class="container">
+    <div class="section-tag" data-i18n="det.tag">Coverage</div>
+    <h2 data-i18n="det.title">What Gets Detected</h2>
+    <p class="section-sub" data-i18n="det.sub">33+ rules across four domains, plus predictive analysis for threats that haven't happened yet.</p>
+    <div class="detection-grid">
+      <div class="detect-card">
+        <div class="detect-header">
+          <span class="detect-dot" style="background:#60a5fa;box-shadow:0 0 6px #60a5fa"></span>
+          <span data-i18n="det.ai">AI / LLM Attacks</span>
+        </div>
+        <ul class="detect-list">
+          <li data-i18n="det.ai.1">Prompt injection</li>
+          <li data-i18n="det.ai.2">Jailbreak attempts</li>
+          <li data-i18n="det.ai.3">System prompt leakage</li>
+          <li data-i18n="det.ai.4">Refusal suppression</li>
+          <li data-i18n="det.ai.5">Multi-turn grooming</li>
+        </ul>
+      </div>
+      <div class="detect-card">
+        <div class="detect-header">
+          <span class="detect-dot" style="background:#f59e0b;box-shadow:0 0 6px #f59e0b"></span>
+          <span data-i18n="det.web">Web Security</span>
+        </div>
+        <ul class="detect-list">
+          <li data-i18n="det.web.1">SQL injection</li>
+          <li data-i18n="det.web.2">XSS attacks</li>
+          <li data-i18n="det.web.3">Command injection</li>
+          <li data-i18n="det.web.4">SSTI</li>
+          <li data-i18n="det.web.5">Path traversal</li>
+        </ul>
+      </div>
+      <div class="detect-card">
+        <div class="detect-header">
+          <span class="detect-dot" style="background:#ef4444;box-shadow:0 0 6px #ef4444"></span>
+          <span data-i18n="det.data">Data Leaks</span>
+        </div>
+        <ul class="detect-list">
+          <li data-i18n="det.data.1">SSH private keys</li>
+          <li data-i18n="det.data.2">AWS credentials</li>
+          <li data-i18n="det.data.3">GitHub tokens</li>
+          <li data-i18n="det.data.4">API keys</li>
+          <li data-i18n="det.data.5">Database connection strings</li>
+        </ul>
+      </div>
+      <div class="detect-card">
+        <div class="detect-header">
+          <span class="detect-dot" style="background:#22c55e;box-shadow:0 0 6px #22c55e"></span>
+          <span data-i18n="det.code">Code Security</span>
+        </div>
+        <ul class="detect-list">
+          <li data-i18n="det.code.1">Hardcoded secrets</li>
+          <li data-i18n="det.code.2">Weak cryptography</li>
+          <li data-i18n="det.code.3">Unsafe eval / exec</li>
+          <li data-i18n="det.code.4">Debug statements</li>
+        </ul>
+      </div>
+      <div class="detect-card">
+        <div class="detect-header">
+          <span class="detect-dot" style="background:#a855f7;box-shadow:0 0 6px #a855f7"></span>
+          <span data-i18n="det.pred">Predictive (7 predictors)</span>
+        </div>
+        <ul class="detect-list">
+          <li data-i18n="det.pred.1">Resource exhaustion</li>
+          <li data-i18n="det.pred.2">Privilege escalation</li>
+          <li data-i18n="det.pred.3">Data exfiltration paths</li>
+          <li data-i18n="det.pred.4">Scope creep</li>
+          <li data-i18n="det.pred.5">Dependency confusion</li>
+          <li data-i18n="det.pred.6">Ambiguous destructive intent</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section id="install">
+  <div class="container">
+    <div class="section-tag" data-i18n="inst.tag">Installation</div>
+    <h2 data-i18n="inst.title">Get Started in Minutes</h2>
+    <div class="install-tabs">
+      <button class="tab-btn active" onclick="switchTab('openclaw')" data-i18n="inst.tab1">OpenClaw / Claude Code</button>
+      <button class="tab-btn" onclick="switchTab('codex')" data-i18n="inst.tab2">Codex (Legacy)</button>
+    </div>
+
+    <div class="tab-panel active" id="tab-openclaw">
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">bash</span>
+          <button class="copy-btn" onclick="copyCode('code-openclaw')" data-i18n="copy">Copy</button>
+        </div>
+        <pre id="code-openclaw"><span class="c-comment"># 1. Install ClawHub CLI</span>
+<span class="c-cmd">npm</span> i <span class="c-flag">-g</span> clawhub
+
+<span class="c-comment"># 2. Install SentrySkills</span>
+<span class="c-cmd">clawhub</span> install sentryskills
+
+<span class="c-comment"># 3. Enable auto-protection</span>
+<span class="c-cmd">cat</span> &gt; ~/.codex/AGENTS.md <span class="c-str">&lt;&lt; 'EOF'
+# Security: SentrySkills runs automatically
+Before EVERY response, run:
+python ./skills/sentry-skills/shared/scripts/self_guard_runtime_hook_template.py \
+  input.json --policy-profile balanced --out result.json
+EOF</span>
+
+<span class="c-comment"># 4. Restart OpenClaw — protected!</span></pre>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-codex">
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">bash</span>
+          <button class="copy-btn" onclick="copyCode('code-codex')" data-i18n="copy">Copy</button>
+        </div>
+        <pre id="code-codex"><span class="c-comment"># 1. Clone and symlink</span>
+<span class="c-cmd">git</span> clone https://github.com/zengbiaojie/SentrySkills.git \
+  ~/.codex/sentryskills
+<span class="c-cmd">mkdir</span> <span class="c-flag">-p</span> ~/.agents/skills
+<span class="c-cmd">ln</span> <span class="c-flag">-s</span> ~/.codex/sentryskills ~/.agents/skills/sentryskills
+
+<span class="c-comment"># 2. Enable auto-protection</span>
+<span class="c-cmd">cat</span> &gt; ~/.codex/AGENTS.md <span class="c-str">&lt;&lt; 'EOF'
+# Security: SentrySkills runs automatically
+Before EVERY response, run:
+python ~/.codex/sentryskills/shared/scripts/self_guard_runtime_hook_template.py \
+  input.json --policy-profile balanced --out result.json
+EOF</span>
+
+<span class="c-comment"># 3. Restart Codex — protected!</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- POLICY -->
+<section style="padding-top:0">
+  <div class="container">
+    <div class="section-tag" data-i18n="pol.tag">Configuration</div>
+    <h2 data-i18n="pol.title">Policy Profiles</h2>
+    <div class="policy-cards">
+      <div class="policy-card">
+        <div class="policy-badge balanced">balanced</div>
+        <div class="policy-title" data-i18n="pol.1.title">Balanced</div>
+        <div class="policy-desc" data-i18n="pol.1.desc">Standard security checks with low false-positive rate. Blocks obvious threats, downgrades suspicious ones.</div>
+        <div class="policy-use" data-i18n="pol.1.use">→ Production environments</div>
+      </div>
+      <div class="policy-card">
+        <div class="policy-badge strict">strict</div>
+        <div class="policy-title" data-i18n="pol.2.title">Strict</div>
+        <div class="policy-desc" data-i18n="pol.2.desc">Maximum security. Any suspicious activity is blocked. Higher false-positive rate — requires explicit authorization.</div>
+        <div class="policy-use" data-i18n="pol.2.use">→ Finance · Healthcare · High-sensitivity data</div>
+      </div>
+      <div class="policy-card">
+        <div class="policy-badge permissive">permissive</div>
+        <div class="policy-title" data-i18n="pol.3.title">Permissive</div>
+        <div class="policy-desc" data-i18n="pol.3.desc">Minimal interference, warnings only. Useful for understanding agent behavior without blocking anything.</div>
+        <div class="policy-use" data-i18n="pol.3.use">→ Local dev · Debugging · Testing</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-links">
+    <a href="https://github.com/zengbiaojie/SentrySkills" target="_blank">GitHub</a>
+    <a href="https://github.com/zengbiaojie/SentrySkills/issues" target="_blank" data-i18n="footer.issues">Issues</a>
+    <a href="https://github.com/zengbiaojie/SentrySkills/tree/main/install" target="_blank" data-i18n="footer.docs">Documentation</a>
+    <a href="https://github.com/zengbiaojie/SentrySkills/discussions" target="_blank" data-i18n="footer.discuss">Discussions</a>
+  </div>
+  <div>SentrySkills · MIT-0 · <span data-i18n="footer.part">Part of the SafeClaw security series</span></div>
+</footer>
+
+<script>
+// ── i18n ──
+const i18n = {
+  en: {
+    'nav.how': 'How It Works',
+    'nav.detection': 'Detection',
+    'nav.install': 'Install',
+    'badge': 'Open Source · MIT-0 · Zero Dependencies',
+    'hero.title1': 'Self-Guarding Security',
+    'hero.title2': 'for AI Agents',
+    'hero.sub': 'LLM-native skill package that teaches agents to protect themselves. Three-stage protection — preflight, runtime, output — driven by the agent\'s own intelligence.',
+    'hero.cta1': 'Get Started',
+    'hero.cta2': 'View on GitHub →',
+    'stat.rules': 'Detection Rules',
+    'stat.predictors': 'Risk Predictors',
+    'stat.latency': 'Avg Latency',
+    'stat.deps': 'External Deps',
+    'how.tag': 'Execution Flow',
+    'how.title': 'How SentrySkills Works',
+    'how.sub': 'Five skills fire in sequence. Each stage passes or blocks before the next begins. Any block terminates immediately.',
+    'flow.1.title': 'Entry Point',
+    'flow.1.desc': 'Auto-triggered via AGENTS.md before every response. Prepares the input context — user prompt, planned actions, candidate response — then hands off to the orchestrator.',
+    'flow.2.title': 'Orchestration',
+    'flow.2.desc': 'Coordinates the full pipeline. Aggregates results from all stages, applies the active policy profile, and produces the final decision with a shared trace ID.',
+    'flow.3.title': 'Preflight Check',
+    'flow.3.desc': 'Runs <strong>before</strong> any action. Analyzes user intent and planned operations against 33+ detection rules. Detects prompt injection, malicious commands, and suspicious patterns.',
+    'flow.4.title': 'Runtime Monitor',
+    'flow.4.desc': 'Watches <strong>during</strong> execution. Tracks tool calls, file operations, network requests. Flags behavioral anomalies and unexpected scope expansion in real time.',
+    'flow.5.title': 'Output Guard',
+    'flow.5.desc': 'Scans the response <strong>before</strong> it\'s sent. Automatically redacts secrets, credentials, API keys, and private data. Prevents sensitive information from leaking through the agent\'s output.',
+    'feat.tag': 'Key Features',
+    'feat.title': 'Built for Production',
+    'feat.1.title': 'LLM-Native Design',
+    'feat.1.desc': 'Security is encoded as agent behavior, not bolted on externally. The agent understands and enforces its own safety rules through SKILL.md and AGENTS.md.',
+    'feat.2.title': 'Zero External Dependencies',
+    'feat.2.desc': '100% Python standard library. No pip install, no Docker, no Redis. Copy the files and it runs — perfect for air-gapped or restricted environments.',
+    'feat.3.title': '~80ms Latency',
+    'feat.3.desc': 'Pure rule-based matching engine. No additional LLM API calls during detection. Fast enough to run on every single task without noticeable overhead.',
+    'feat.4.title': 'Predictive Analysis',
+    'feat.4.desc': '7 risk predictors warn about threats before they materialize — resource exhaustion, privilege escalation, data exfiltration paths, multi-turn grooming, and more.',
+    'feat.5.title': 'Full Traceability',
+    'feat.5.desc': 'Every decision is logged to ./sentry_skill_log/ as JSONL. Each stage shares a trace ID, making post-incident analysis and compliance auditing straightforward.',
+    'feat.6.title': 'Flexible Policies',
+    'feat.6.desc': 'Three built-in profiles: Balanced for production, Strict for high-sensitivity data, Permissive for development. Custom rules via JSON, hot-reloadable.',
+    'det.tag': 'Coverage',
+    'det.title': 'What Gets Detected',
+    'det.sub': '33+ rules across four domains, plus predictive analysis for threats that haven\'t happened yet.',
+    'det.ai': 'AI / LLM Attacks',
+    'det.ai.1': 'Prompt injection',
+    'det.ai.2': 'Jailbreak attempts',
+    'det.ai.3': 'System prompt leakage',
+    'det.ai.4': 'Refusal suppression',
+    'det.ai.5': 'Multi-turn grooming',
+    'det.web': 'Web Security',
+    'det.web.1': 'SQL injection',
+    'det.web.2': 'XSS attacks',
+    'det.web.3': 'Command injection',
+    'det.web.4': 'SSTI',
+    'det.web.5': 'Path traversal',
+    'det.data': 'Data Leaks',
+    'det.data.1': 'SSH private keys',
+    'det.data.2': 'AWS credentials',
+    'det.data.3': 'GitHub tokens',
+    'det.data.4': 'API keys',
+    'det.data.5': 'Database connection strings',
+    'det.code': 'Code Security',
+    'det.code.1': 'Hardcoded secrets',
+    'det.code.2': 'Weak cryptography',
+    'det.code.3': 'Unsafe eval / exec',
+    'det.code.4': 'Debug statements',
+    'det.pred': 'Predictive (7 predictors)',
+    'det.pred.1': 'Resource exhaustion',
+    'det.pred.2': 'Privilege escalation',
+    'det.pred.3': 'Data exfiltration paths',
+    'det.pred.4': 'Scope creep',
+    'det.pred.5': 'Dependency confusion',
+    'det.pred.6': 'Ambiguous destructive intent',
+    'inst.tag': 'Installation',
+    'inst.title': 'Get Started in Minutes',
+    'inst.tab1': 'OpenClaw / Claude Code',
+    'inst.tab2': 'Codex (Legacy)',
+    'copy': 'Copy',
+    'pol.tag': 'Configuration',
+    'pol.title': 'Policy Profiles',
+    'pol.1.title': 'Balanced',
+    'pol.1.desc': 'Standard security checks with low false-positive rate. Blocks obvious threats, downgrades suspicious ones.',
+    'pol.1.use': '→ Production environments',
+    'pol.2.title': 'Strict',
+    'pol.2.desc': 'Maximum security. Any suspicious activity is blocked. Higher false-positive rate — requires explicit authorization.',
+    'pol.2.use': '→ Finance · Healthcare · High-sensitivity data',
+    'pol.3.title': 'Permissive',
+    'pol.3.desc': 'Minimal interference, warnings only. Useful for understanding agent behavior without blocking anything.',
+    'pol.3.use': '→ Local dev · Debugging · Testing',
+    'footer.issues': 'Issues',
+    'footer.docs': 'Documentation',
+    'footer.discuss': 'Discussions',
+    'footer.part': 'Part of the SafeClaw security series',
+  },
+  zh: {
+    'nav.how': '工作原理',
+    'nav.detection': '检测规则',
+    'nav.install': '安装',
+    'badge': '开源 · MIT-0 · 零外部依赖',
+    'hero.title1': 'AI Agent 自防护安全',
+    'hero.title2': '技能包',
+    'hero.sub': 'LLM 原生自防护技能包，把安全检查编码为 Agent 的行为模式。三段式防护——预检、运行时、输出——由 Agent 自身智能驱动。',
+    'hero.cta1': '快速开始',
+    'hero.cta2': '查看 GitHub →',
+    'stat.rules': '检测规则',
+    'stat.predictors': '风险预测器',
+    'stat.latency': '平均延迟',
+    'stat.deps': '外部依赖',
+    'how.tag': '执行流程',
+    'how.title': 'SentrySkills 如何运行',
+    'how.sub': '五个技能依序触发，每个阶段通过或阻断后才进入下一阶段，任何阻断决策立即终止执行。',
+    'flow.1.title': '入口层',
+    'flow.1.desc': '通过 AGENTS.md 在每次响应前自动触发。准备输入上下文——用户意图、计划操作、候选响应——然后交给协调层。',
+    'flow.2.title': '协调层',
+    'flow.2.desc': '协调整个执行管线。聚合各阶段检测结果，应用策略配置，生成带共享 trace ID 的最终决策。',
+    'flow.3.title': '预检层',
+    'flow.3.desc': '在任何操作执行<strong>之前</strong>运行。对照 33+ 检测规则分析用户意图和计划操作，检测 Prompt 注入、恶意命令和可疑模式。',
+    'flow.4.title': '运行时监控层',
+    'flow.4.desc': '在执行<strong>过程中</strong>监控。追踪工具调用、文件操作、网络请求，实时发现行为异常和意外的范围扩大。',
+    'flow.5.title': '输出层',
+    'flow.5.desc': '在响应发送<strong>之前</strong>扫描。自动脱敏密钥、凭证、API Key 和私有数据，防止敏感信息通过 Agent 输出泄露。',
+    'feat.tag': '核心特性',
+    'feat.title': '为生产环境而生',
+    'feat.1.title': 'LLM 原生设计',
+    'feat.1.desc': '安全能力被编码为 Agent 的行为模式，而非外部附加。Agent 通过 SKILL.md 和 AGENTS.md 理解并执行自身的安全规则。',
+    'feat.2.title': '零外部依赖',
+    'feat.2.desc': '100% Python 标准库实现，无需 pip install、Docker、Redis。复制文件即可运行，完美适配离线或受限环境。',
+    'feat.3.title': '~80ms 低延迟',
+    'feat.3.desc': '纯规则匹配引擎，检测过程中无额外 LLM API 调用。对每个任务运行安全检查都足够快，不影响用户体验。',
+    'feat.4.title': '预测式风险分析',
+    'feat.4.desc': '7 项风险预测器在危险发生前提前预警——资源耗尽、权限提升、数据外渗路径、多轮诱导等。',
+    'feat.5.title': '全流程可追溯',
+    'feat.5.desc': '每次决策以 JSONL 格式记录到 ./sentry_skill_log/。各阶段共享 trace ID，方便事后审计和合规分析。',
+    'feat.6.title': '灵活策略配置',
+    'feat.6.desc': '三档内置策略：生产用 Balanced，高敏感场景用 Strict，开发调试用 Permissive。支持自定义 JSON 规则，热加载。',
+    'det.tag': '检测覆盖',
+    'det.title': '能检测什么',
+    'det.sub': '四大检测域共 33+ 条规则，加上针对尚未发生威胁的预测性分析。',
+    'det.ai': 'AI / LLM 攻击',
+    'det.ai.1': 'Prompt 注入',
+    'det.ai.2': '越狱尝试',
+    'det.ai.3': '系统 Prompt 泄露',
+    'det.ai.4': '拒绝压制',
+    'det.ai.5': '多轮诱导',
+    'det.web': 'Web 安全',
+    'det.web.1': 'SQL 注入',
+    'det.web.2': 'XSS 攻击',
+    'det.web.3': '命令注入',
+    'det.web.4': 'SSTI 模板注入',
+    'det.web.5': '路径遍历',
+    'det.data': '数据泄露',
+    'det.data.1': 'SSH 私钥',
+    'det.data.2': 'AWS 凭证',
+    'det.data.3': 'GitHub Token',
+    'det.data.4': 'API 密钥',
+    'det.data.5': '数据库连接串',
+    'det.code': '代码安全',
+    'det.code.1': '硬编码密钥',
+    'det.code.2': '弱加密算法',
+    'det.code.3': '不安全 eval/exec',
+    'det.code.4': '调试语句遗留',
+    'det.pred': '预测分析（7 项预测器）',
+    'det.pred.1': '资源耗尽',
+    'det.pred.2': '权限提升',
+    'det.pred.3': '数据外渗路径',
+    'det.pred.4': '范围蔓延',
+    'det.pred.5': '依赖混淆',
+    'det.pred.6': '模糊破坏意图',
+    'inst.tag': '安装',
+    'inst.title': '几分钟内完成部署',
+    'inst.tab1': 'OpenClaw / Claude Code',
+    'inst.tab2': 'Codex（传统方式）',
+    'copy': '复制',
+    'pol.tag': '配置',
+    'pol.title': '策略配置文件',
+    'pol.1.title': '平衡模式',
+    'pol.1.desc': '标准安全检查，低误报率。明显威胁直接阻断，可疑操作降级处理。',
+    'pol.1.use': '→ 生产环境',
+    'pol.2.title': '严格模式',
+    'pol.2.desc': '最高安全级别。任何可疑行为均被阻断，误报率较高，需要明确授权才能继续。',
+    'pol.2.use': '→ 金融 · 医疗 · 高敏感数据',
+    'pol.3.title': '宽松模式',
+    'pol.3.desc': '最小化干预，仅产生警告。适合理解 Agent 行为、不希望被阻断的场景。',
+    'pol.3.use': '→ 本地开发 · 调试 · 测试',
+    'footer.issues': '问题反馈',
+    'footer.docs': '文档',
+    'footer.discuss': '讨论',
+    'footer.part': 'SafeClaw 安全系列的一部分',
+  }
+};
+
+let currentLang = 'en';
+
+function applyLang(lang) {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (i18n[lang][key] !== undefined) {
+      el.innerHTML = i18n[lang][key];
+    }
+  });
+  document.documentElement.lang = lang;
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'en' ? 'zh' : 'en';
+  document.getElementById('langLabel').textContent = currentLang === 'en' ? '中文' : 'EN';
+  applyLang(currentLang);
+}
+
+// ── Tabs ──
+function switchTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ── Copy code ──
+function copyCode(id) {
+  const el = document.getElementById(id);
+  const text = el.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = event.target;
+    const original = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => btn.textContent = original, 1500);
+  });
+}
+
+// ── Smooth scroll ──
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+</script>
+</body>
+</html>

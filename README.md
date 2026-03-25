@@ -45,7 +45,7 @@ EOF
 ### Codex (Legacy)
 
 ```bash
-git clone https://github.com/zengbiaojie/SentrySkills.git ~/.codex/sentryskills
+git clone https://github.com/AI45Lab/SentrySkills.git ~/.codex/sentryskills
 mkdir -p ~/.agents/skills
 ln -s ~/.codex/sentryskills ~/.agents/skills/sentryskills
 ```
@@ -166,5 +166,5 @@ Contributions welcome:
 
 ## 🔗 Links
 
-- **Issues**: https://github.com/zengbiaojie/SentrySkills/issues
+- **Issues**: https://github.com/AI45Lab/SentrySkills/issues
 - **Documentation**: [install/](install/)

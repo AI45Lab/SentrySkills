@@ -45,35 +45,6 @@ except ImportError as e:
     logger.warning(f"Validation modules not available: {e}")
     VALIDATION_AVAILABLE = False
 
-# Import resource management (platform-specific)
-try:
-    from resource_management import (
-        resource_context,
-        check_disk_space,
-        limit_text_length,
-        limit_array_size,
-    )
-    RESOURCE_MANAGEMENT_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Resource management modules not available: {e}")
-    RESOURCE_MANAGEMENT_AVAILABLE = False
-
-# Import performance optimization module
-try:
-    from performance import (
-        parallel_detect,
-        parallel_detect_threadpool,
-        should_early_exit,
-        cached_detect,
-        get_cache_stats,
-        performance_monitor,
-    )
-    PERFORMANCE_AVAILABLE = True
-    logger.info("Performance optimization module loaded")
-except ImportError as e:
-    logger.warning(f"Performance optimization module not available: {e}")
-    PERFORMANCE_AVAILABLE = False
-
 # Import predictive analysis module
 try:
     from predictive_analysis import predict_risks
@@ -83,35 +54,22 @@ except ImportError as e:
     logger.warning(f"Predictive analysis module not available: {e}")
     PREDICTIVE_ANALYSIS_AVAILABLE = False
 
-# Create platform-specific fallbacks
-if not RESOURCE_MANAGEMENT_AVAILABLE:
-    # Fallback implementations for resource management
-    import contextlib
+import contextlib
 
-    @contextlib.contextmanager
-    def resource_context(**kwargs):
-        """Fallback resource context (no-op)."""
-        yield lambda: None
+@contextlib.contextmanager
+def resource_context(**kwargs):
+    yield lambda: None
 
-    def check_disk_space(*args, **kwargs):
-        """Fallback disk space check (no-op)."""
-        pass
+def limit_text_length(text, max_length=1_000_000):
+    if isinstance(text, str) and len(text) > max_length:
+        suffix = "... [truncated]"
+        return text[:max(0, max_length - len(suffix))] + suffix
+    return text
 
-    def limit_text_length(text, max_length=1000000):
-        """Fallback text limiter."""
-        if isinstance(text, str) and len(text) > max_length:
-            suffix = "... [truncated]"
-            truncated_max = max_length - len(suffix)
-            return text[:max(0, truncated_max)] + suffix
-        return text
-
-    def limit_array_size(arr, max_size=10000):
-        """Fallback array limiter."""
-        if isinstance(arr, list) and len(arr) > max_size:
-            return arr[:max_size]
-        return arr
-
-    logger.debug("Using fallback resource management (resource limits not available on this platform)")
+def limit_array_size(arr, max_size=10000):
+    if isinstance(arr, list) and len(arr) > max_size:
+        return arr[:max_size]
+    return arr
 
 # Configure logging
 logging.basicConfig(
@@ -125,8 +83,6 @@ logger = logging.getLogger(__name__)
 early_exit_enabled: bool = True
 contextual_matching_enabled: bool = True
 pattern_cache_enabled: bool = True
-parallel_detection_enabled: bool = True  # NEW: Parallel detection
-detection_cache_enabled: bool = True      # NEW: Detection result cache
 
 DEFAULT_POLICY: Dict[str, Any] = {
     "sensitive_event_types": ["read_secret", "read_credential", "read_private_pii", "read_key_material"],
@@ -2217,22 +2173,6 @@ def preflight_decision(
     database_phrases = [str(x).lower() for x in policy.get("database_leak_phrases", [])]
     has_high_risk_action = any(a in high_risk_actions for a in planned_actions)
 
-    # Early Exit Optimization: Check for high-risk patterns first
-    if PERFORMANCE_AVAILABLE and early_exit_enabled:
-        should_exit, exit_reason = should_early_exit(user_prompt, planned_actions, policy)
-        if should_exit:
-            # Return early block decision
-            return {
-                "preflight_decision": "block",
-                "risk_summary": [exit_reason],
-                "blocked_actions": ["all"],
-                "verification_requirements": [],
-                "decision_reason_codes": ["PF_EARLY_EXIT"],
-                "matched_rules": ["early_exit_high_risk"],
-                "sensitivity_state": sensitivity_state,
-                "early_exit": True,
-            }
-
     risk_summary: List[str] = []
     blocked_actions: List[str] = []
     verification_requirements: List[str] = []
@@ -2250,28 +2190,13 @@ def preflight_decision(
     config_hits = get_match_hits(prompt_low, config_phrases)
     database_hits = get_match_hits(prompt_low, database_phrases)
 
-    # New checks: sensitive content detection (PARALLEL)
-    if PERFORMANCE_AVAILABLE and parallel_detection_enabled:
-        # Use parallel detection for better performance
-        parallel_results = parallel_detect_threadpool(
-            user_prompt,
-            policy,
-            max_workers=4
-        )
-        jwt_detected = parallel_results.get("detect_jwt_token", False)
-        db_connection_detected = parallel_results.get("detect_database_connection", False)
-        email_detected = parallel_results.get("detect_email_addresses", False)
-        ip_detected = parallel_results.get("detect_ip_addresses", False)
-        cc_detected = parallel_results.get("detect_credit_card", False)
-        env_var_detected = parallel_results.get("detect_environment_variables", False)
-    else:
-        # Fallback to serial detection
-        jwt_detected = detect_jwt_token(user_prompt)
-        db_connection_detected = detect_database_connection(user_prompt)
-        email_detected = detect_email_addresses(user_prompt)
-        ip_detected = detect_ip_addresses(user_prompt)
-        cc_detected = detect_credit_card(user_prompt)
-        env_var_detected = detect_environment_variables(user_prompt)
+    # Sensitive content detection
+    jwt_detected = detect_jwt_token(user_prompt)
+    db_connection_detected = detect_database_connection(user_prompt)
+    email_detected = detect_email_addresses(user_prompt)
+    ip_detected = detect_ip_addresses(user_prompt)
+    cc_detected = detect_credit_card(user_prompt)
+    env_var_detected = detect_environment_variables(user_prompt)
 
     # New checks: attack patterns
     attack_detection = detect_attack_patterns(user_prompt, policy)
@@ -2823,96 +2748,78 @@ def main() -> None:
     parser.add_argument("--unified-log-dir", default="./sentry_skill_log/trinityguard", help="Unified log directory (single file per query)")
     parser.add_argument("--policy", default=None, help="Optional runtime policy JSON path")
     parser.add_argument("--policy-profile", default="balanced", help="Policy profile tag for audit")
-    parser.add_argument("--max-memory-mb", type=int, default=1024, help="Maximum memory usage in MB")
     parser.add_argument("--strict-validation", action="store_true", help="Enable strict input validation")
     args = parser.parse_args()
 
-    # Resource-limited execution
-    with resource_context(max_memory_mb=args.max_memory_mb):
+    try:
+        input_path = Path(args.input_json).resolve()
+        hook_start = perf_counter()
+
+        # Load and validate input
         try:
-            # Load input with error handling
-            input_path = Path(args.input_json).resolve()
-            hook_start = perf_counter()
-
-            # Check disk space before starting
-            check_disk_space(input_path.parent, min_space_mb=50)
-
-            # Load and validate input
-            try:
-                payload = load_json(input_path)
-            except Exception as e:
-                logger.error(f"Failed to load input JSON: {e}")
-                raise InputValidationError(
-                    f"Failed to load input from {input_path}",
-                    details={"error": str(e)},
-                    original_error=e
-                )
-
-            # Validate input if validation is available
-            if VALIDATION_AVAILABLE and args.strict_validation:
-                validate_input(payload, strict=True)
-                logger.debug("Input validation passed")
-
-            # Sanitize input to prevent issues
-            if VALIDATION_AVAILABLE:
-                payload = sanitize_input(payload)
-                logger.debug("Input sanitized")
-
-            project_root = resolve_project_root(payload, input_path)
-            events_log = resolve_path_in_project(args.events_log, project_root)
-            state_dir = resolve_path_in_project(args.state_dir, project_root)
-            out_path = resolve_path_in_project(args.out, project_root) if args.out else None
-            turns_dir = resolve_path_in_project(args.turns_dir, project_root)
-            index_log = resolve_path_in_project(args.index_log, project_root)
-            unified_log_dir = resolve_path_in_project(args.unified_log_dir, project_root)
-
-            # Extract and limit data sizes
-            session_id = str(payload.get("session_id", "default-session"))[:1000]
-            turn_id = str(payload.get("turn_id", payload.get("request_id", "unknown-turn")))[:1000]
-            trace_id = f"{session_id}:{turn_id}:{uuid.uuid4().hex[:8]}"
-
-            # Limit text lengths
-            user_prompt = limit_text_length(
-                str(payload.get("user_prompt", payload.get("user_request", "")))
+            payload = load_json(input_path)
+        except Exception as e:
+            logger.error(f"Failed to load input JSON: {e}")
+            raise InputValidationError(
+                f"Failed to load input from {input_path}",
+                details={"error": str(e)},
+                original_error=e
             )
-            candidate_response = limit_text_length(
-                str(payload.get("candidate_response", "")))
 
-            # Limit array sizes
-            planned_actions = limit_array_size(
-                [str(x) for x in payload.get("planned_actions", [])])
-            runtime_events_list = limit_array_size(
-                payload.get("runtime_events", []))
-            sources_list = limit_array_size(
-                payload.get("sources", []))
-            intent_tags = limit_array_size(
-                [str(x) for x in payload.get("intent_tags", [])])
+        # Validate input if validation is available
+        if VALIDATION_AVAILABLE and args.strict_validation:
+            validate_input(payload, strict=True)
+            logger.debug("Input validation passed")
 
-        except TrinityGuardError as e:
-            # Log TrinityGuard errors
-            log_error_with_context(e, context={"input": str(args.input_json)})
-            logger.error(f"TrinityGuard error: {e}")
+        # Sanitize input to prevent issues
+        if VALIDATION_AVAILABLE:
+            payload = sanitize_input(payload)
+            logger.debug("Input sanitized")
 
-            # Try to write error log
-            try:
-                error_log = {
-                    "error": e.to_dict(),
-                    "input": str(args.input_json),
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-                error_log_path = Path("./sentry_skill_log/trinityguard/error.json")
-                error_log_path.parent.mkdir(parents=True, exist_ok=True)
-                save_json(error_log_path, error_log)
-            except Exception:
-                pass
+        project_root = resolve_project_root(payload, input_path)
+        events_log = resolve_path_in_project(args.events_log, project_root)
+        state_dir = resolve_path_in_project(args.state_dir, project_root)
+        out_path = resolve_path_in_project(args.out, project_root) if args.out else None
+        turns_dir = resolve_path_in_project(args.turns_dir, project_root)
+        index_log = resolve_path_in_project(args.index_log, project_root)
+        unified_log_dir = resolve_path_in_project(args.unified_log_dir, project_root)
 
-            # Exit with error code
-            import sys
-            sys.exit(1)
-    intent_tags = [str(x) for x in payload.get("intent_tags", [])]
-    candidate_response = str(payload.get("candidate_response", ""))
-    runtime_events_list = runtime_events if isinstance(runtime_events, list) else []
-    sources_list = sources if isinstance(sources, list) else []
+        # Extract and limit data sizes
+        session_id = str(payload.get("session_id", "default-session"))[:1000]
+        turn_id = str(payload.get("turn_id", payload.get("request_id", "unknown-turn")))[:1000]
+        trace_id = f"{session_id}:{turn_id}:{uuid.uuid4().hex[:8]}"
+
+        user_prompt = limit_text_length(
+            str(payload.get("user_prompt", payload.get("user_request", "")))
+        )
+        candidate_response = limit_text_length(
+            str(payload.get("candidate_response", "")))
+
+        planned_actions = limit_array_size(
+            [str(x) for x in payload.get("planned_actions", [])])
+        runtime_events_list = limit_array_size(
+            payload.get("runtime_events", []))
+        sources_list = limit_array_size(
+            payload.get("sources", []))
+        intent_tags = limit_array_size(
+            [str(x) for x in payload.get("intent_tags", [])])
+
+    except TrinityGuardError as e:
+        log_error_with_context(e, context={"input": str(args.input_json)})
+        logger.error(f"TrinityGuard error: {e}")
+        try:
+            error_log = {
+                "error": e.to_dict(),
+                "input": str(args.input_json),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            error_log_path = Path("./sentry_skill_log/trinityguard/error.json")
+            error_log_path.parent.mkdir(parents=True, exist_ok=True)
+            save_json(error_log_path, error_log)
+        except Exception:
+            pass
+        import sys
+        sys.exit(1)
 
     events_sink: Optional[Path] = events_log if args.log_layout == "legacy" else None
     turn_dir = turns_dir / make_turn_dir_name(turn_id)
@@ -2962,18 +2869,9 @@ def main() -> None:
 
     # Feature flags (controlled via environment)
     global early_exit_enabled, contextual_matching_enabled, pattern_cache_enabled
-    global parallel_detection_enabled, detection_cache_enabled
     early_exit_enabled = os.environ.get("TRINITYGUARD_EARLY_EXIT", "true").lower() == "true"
     contextual_matching_enabled = os.environ.get("TRINITYGUARD_CONTEXTUAL_MATCHING", "true").lower() == "true"
     pattern_cache_enabled = os.environ.get("TRINITYGUARD_PATTERN_CACHE", "true").lower() == "true"
-    parallel_detection_enabled = os.environ.get("TRINITYGUARD_PARALLEL_DETECTION", "true").lower() == "true"
-    detection_cache_enabled = os.environ.get("TRINITYGUARD_DETECTION_CACHE", "true").lower() == "true"
-
-    # Log performance optimization status
-    if PERFORMANCE_AVAILABLE:
-        logger.info(f"Performance optimizations enabled: parallel={parallel_detection_enabled}, early_exit={early_exit_enabled}, cache={detection_cache_enabled}")
-    else:
-        logger.warning("Performance optimization module not available")
 
     try:
         policy = dict(DEFAULT_POLICY)

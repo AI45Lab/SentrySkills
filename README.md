@@ -21,7 +21,7 @@ SentrySkills protects AI agents from:
 
 ## 📥 Installation
 
-### OpenClaw / Claude Code (Recommended)
+### OpenClaw
 
 ```bash
 # Install ClawHub CLI

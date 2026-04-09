@@ -519,7 +519,7 @@
       <div class="feature-card">
         <div class="feature-icon">🗂️</div>
         <div class="feature-title" data-i18n="feat.5.title">Full Traceability</div>
-        <div class="feature-desc" data-i18n="feat.5.desc">Every decision is logged to ./sentry_skill_log/ as JSONL. Each stage shares a trace ID, making post-incident analysis and compliance auditing straightforward.</div>
+        <div class="feature-desc" data-i18n="feat.5.desc">Every decision is logged to ./sentry_skill_log/ with trace IDs. Logs include final explanation plus stage-level analysis (preflight/runtime/output), decision_trace, and stage_analyses. Unified detailed log is default; summary output is optional via --emit-summary.</div>
       </div>
       <div class="feature-card">
         <div class="feature-icon">🎛️</div>
@@ -785,7 +785,7 @@ const i18n = {
     'feat.4.title': 'Predictive Analysis',
     'feat.4.desc': '7 risk predictors warn about threats before they materialize — resource exhaustion, privilege escalation, data exfiltration paths, multi-turn grooming, and more.',
     'feat.5.title': 'Full Traceability',
-    'feat.5.desc': 'Every decision is logged to ./sentry_skill_log/ as JSONL. Each stage shares a trace ID, making post-incident analysis and compliance auditing straightforward.',
+    'feat.5.desc': 'Every decision is logged to ./sentry_skill_log/ with trace IDs. Logs include final explanation plus stage-level analysis (preflight/runtime/output), decision_trace, and stage_analyses. Unified detailed log is default; summary output is optional via --emit-summary.',
     'feat.6.title': 'Flexible Policies',
     'feat.6.desc': 'Three built-in profiles: Balanced for production, Strict for high-sensitivity data, Permissive for development. Custom rules via JSON, hot-reloadable.',
     'det.tag': 'Coverage',
@@ -895,7 +895,7 @@ const i18n = {
     'feat.4.title': '预测式风险分析',
     'feat.4.desc': '7 项风险预测器在危险发生前提前预警——资源耗尽、权限提升、数据外渗路径、多轮诱导等。',
     'feat.5.title': '全流程可追溯',
-    'feat.5.desc': '每次决策以 JSONL 格式记录到 ./sentry_skill_log/。各阶段共享 trace ID，方便事后审计和合规分析。',
+    'feat.5.desc': '每次决策都会记录到 ./sentry_skill_log/ 并带有 trace ID。日志同时包含最终解释和分阶段分析（preflight/runtime/output）、decision_trace 与 stage_analyses。默认输出 unified 详细日志；如需摘要文件，请使用 --emit-summary。',
     'feat.6.title': '灵活策略配置',
     'feat.6.desc': '三档内置策略：生产用 Balanced，高敏感场景用 Strict，开发调试用 Permissive。支持自定义 JSON 规则，热加载。',
     'det.tag': '检测覆盖',

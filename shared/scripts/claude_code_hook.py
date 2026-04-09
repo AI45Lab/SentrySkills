@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Claude Code PreToolUse hook adapter for SentrySkills.
 
@@ -15,17 +15,18 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
 # Force UTF-8 output on Windows to avoid GBK codec errors
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-import tempfile
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
 
 # Resolve project root relative to this script
 SCRIPT_DIR = Path(__file__).parent
@@ -67,13 +68,13 @@ def extract_prompt_from_tool(tool_name: str, tool_input: dict) -> str:
 def main() -> int:
     raw = sys.stdin.read().strip()
     if not raw:
-        # No input — allow
+        # No input, allow
         return 0
 
     try:
         hook_data = json.loads(raw)
     except json.JSONDecodeError:
-        print("[SentrySkills] hook: could not parse stdin JSON — allowing", file=sys.stderr)
+        print("[SentrySkills] hook: could not parse stdin JSON, allowing", file=sys.stderr)
         return 0
 
     tool_name: str = hook_data.get("tool_name", "unknown")
@@ -98,7 +99,7 @@ def main() -> int:
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     input_path = LOG_DIR / f"hook_input_{turn_id}.json"
-    result_path = LOG_DIR / f"hook_result_{turn_id}.json"
+    unified_log_path: Optional[Path] = None
 
     try:
         input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -109,7 +110,6 @@ def main() -> int:
                 str(HOOK_SCRIPT),
                 str(input_path),
                 "--policy-profile", policy_profile,
-                "--out", str(result_path),
             ],
             capture_output=True,
             text=True,
@@ -121,15 +121,24 @@ def main() -> int:
             print(f"[SentrySkills] hook script error:\n{proc.stderr[-500:]}", file=sys.stderr)
             return 0  # fail-open: don't block on hook script errors
 
-        if not result_path.exists():
-            print("[SentrySkills] no result file — allowing", file=sys.stderr)
+        # Only detailed unified log is used for decision.
+        match = re.search(r"Unified log:\s*(.+)", proc.stdout or "")
+        if match:
+            unified_log_path = Path(match.group(1).strip())
+
+        if not unified_log_path or not unified_log_path.exists():
+            print("[SentrySkills] no unified log file found, allowing", file=sys.stderr)
             return 0
 
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-        final_action = result.get("final_action", "allow")
-        trace_id = result.get("trace_id", "?")
-        matched_rules = result.get("matched_rules", [])
-        reason_codes = result.get("decision_reason_codes", [])
+        result = json.loads(unified_log_path.read_text(encoding="utf-8"))
+        final_node = result.get("final", {})
+        meta_node = result.get("meta", {})
+
+        final_action = final_node.get("action", "allow")
+        trace_id = meta_node.get("trace_id", "?")
+        matched_rules = final_node.get("matched_rules", [])
+        reason_codes = final_node.get("reason_codes", [])
+        explanation = final_node.get("explanation", "")
 
         if final_action == "block":
             msg = (
@@ -138,6 +147,7 @@ def main() -> int:
                 f"   Trace   : {trace_id}\n"
                 f"   Matched : {matched_rules}\n"
                 f"   Reason  : {reason_codes}\n"
+                f"   Why     : {explanation}\n"
                 f"   Action  : Refusing - do not proceed with this operation.\n"
             )
             print(msg)
@@ -146,7 +156,7 @@ def main() -> int:
         if final_action == "downgrade":
             print(
                 f"[SentrySkills] WARNING: downgrade on {tool_name} "
-                f"(trace={trace_id}, rules={matched_rules})",
+                f"(trace={trace_id}, rules={matched_rules}, why={explanation})",
                 file=sys.stderr,
             )
             return 0  # allow with warning
@@ -154,10 +164,10 @@ def main() -> int:
         return 0  # allow
 
     except subprocess.TimeoutExpired:
-        print("[SentrySkills] hook timed out — allowing", file=sys.stderr)
+        print("[SentrySkills] hook timed out, allowing", file=sys.stderr)
         return 0
     except Exception as e:
-        print(f"[SentrySkills] hook exception: {e} — allowing", file=sys.stderr)
+        print(f"[SentrySkills] hook exception: {e}, allowing", file=sys.stderr)
         return 0
     finally:
         # Clean up input file

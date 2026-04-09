@@ -5,6 +5,33 @@ All notable changes to SentrySkills will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-04-08
+
+### Added
+
+- **Stage-Level Analysis in Logs**:
+  - Added per-stage `analysis` text for `preflight`, `runtime`, and `output_guard`
+  - Added `stage_analyses` to summary output for quick stage-by-stage reading
+  - Added stage analysis content to `decision_trace.stages[*].analysis`
+- **Improved Decision Explainability**:
+  - Added reason-code to human-readable description mapping
+  - Enhanced `decision_explanation` to better describe final decision path
+
+### Changed
+
+- **Logging Output Strategy**:
+  - Runtime hook now defaults to detailed unified log only
+  - Summary JSON is now opt-in via `--emit-summary` (together with `--out`)
+- **Hook Integration Behavior**:
+  - `claude_code_hook.py` now reads decision from unified detailed log output
+  - Block and downgrade hook messages now include human-readable `Why` explanation
+
+### Removed
+
+- **Legacy Summary Dependency in Hook Flow**:
+  - Removed reliance on `hook_result_*.json` for hook decision parsing
+  - Hook decision pipeline now uses unified log as single source of truth
+
 ## [0.1.6] - 2026-04-03
 
 ### Added

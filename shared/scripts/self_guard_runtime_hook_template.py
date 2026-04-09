@@ -2009,6 +2009,9 @@ def build_unified_log(
             "redacted": output.get("redaction_applied", False)
         })
 
+    decision_trace = _build_decision_trace(preflight, runtime, output, final_action)
+    decision_explanation = _build_explanation(preflight, runtime, output)
+
     # Assemble unified log
     unified_log = {
         # ===== Meta =====
@@ -2036,6 +2039,7 @@ def build_unified_log(
         # ===== Preflight Stage =====
         "preflight": {
             "decision": preflight.get("preflight_decision", "unknown"),
+            "analysis": preflight.get("analysis", ""),
             "sensitivity_state": preflight.get("sensitivity_state", "normal"),
             "previous_state": sensitivity_inference.get("previous_state", "normal"),
             "risk_summary": preflight.get("risk_summary", []),
@@ -2051,6 +2055,7 @@ def build_unified_log(
         # ===== Runtime Stage =====
         "runtime": {
             "decision": runtime.get("runtime_decision", "unknown"),
+            "analysis": runtime.get("analysis", ""),
             "events": runtime.get("runtime_events", []),
             "alerts": runtime.get("alerts", []),
             "suggested_actions": runtime.get("suggested_actions", []),
@@ -2067,6 +2072,7 @@ def build_unified_log(
         # ===== Output Guard Stage =====
         "output_guard": {
             "decision": output.get("output_decision", "unknown"),
+            "analysis": output.get("analysis", ""),
             "leakage_detected": output.get("leakage_detected", False),
             "residual_leakage_detected": output.get("residual_leakage_detected", False),
             "redaction_applied": output.get("redaction_applied", False),
@@ -2086,7 +2092,8 @@ def build_unified_log(
             "matched_rules": matched_rules,
             "residual_risks": sorted(set(residual_risks)),
             "recommended_action": _get_recommended_action(final_action),
-            "explanation": _build_explanation(preflight, runtime, output),
+            "explanation": decision_explanation,
+            "decision_trace": decision_trace,
         },
 
         # ===== Audit Info =====
@@ -2112,25 +2119,237 @@ def _get_recommended_action(final_action: str) -> str:
     return recommendations.get(final_action, "Unknown action")
 
 
+def _describe_reason_code(code: str) -> str:
+    """Translate internal reason code into a human-readable sentence."""
+    known = {
+        "PF_EXPLICIT_DISCLOSURE": "User prompt explicitly asks to disclose sensitive values.",
+        "PF_CREDENTIAL_EXFIL_REQUEST": "Prompt appears to request credential extraction or exfiltration.",
+        "PF_IMPLICIT_DISCLOSURE_RISK": "Prompt implies disclosure of sensitive configuration values.",
+        "PF_HIGH_RISK_ACTION": "High-risk action is planned and requires verification.",
+        "RT_RETRY_THRESHOLD": "Repeated retries exceeded configured threshold.",
+        "RT_SINGLE_SOURCE_ONLY": "Only single-source tool evidence is available.",
+        "RT_CRITICAL_ALERT_STOP": "Runtime produced critical alerts that require stopping.",
+        "RT_RAPID_FILE_ACCESS": "Runtime pattern indicates rapid file access behavior.",
+        "RT_BULK_OPERATIONS": "Runtime pattern indicates bulk operations behavior.",
+        "OG_LEAK_PATTERN_HIT": "Output contains content matching sensitive leak patterns.",
+        "OG_EXTENDED_RULE_HIT": "Output matched extended security detection rules.",
+        "OG_HIGHLY_SENSITIVE_BLOCK": "Highly sensitive context plus leak signal triggered block.",
+        "OG_REDACT_AND_DOWNGRADE": "Output was redacted and confidence was downgraded.",
+        "OG_RESIDUAL_LEAK_BLOCK": "Sensitive content remained after redaction, so response was blocked.",
+        "OG_SINGLE_SOURCE_DOWNGRADE": "Single-source evidence forced lower confidence output.",
+    }
+    if code in known:
+        return known[code]
+    if code.startswith("PF_ATTACK_"):
+        return "Preflight attack-pattern detector was triggered."
+    if code.startswith("PF_EXTENDED_"):
+        return "Preflight matched an extended detection rule."
+    if code.startswith("PF_CRITICAL_ACTION_"):
+        return "A critical action was planned in preflight."
+    if code.startswith("PREDICTIVE_RISK_"):
+        return "Predictive analysis reported elevated risk."
+    if code.startswith("RT_"):
+        return "Runtime monitoring raised a risk signal."
+    if code.startswith("OG_"):
+        return "Output guard raised a leakage or confidence signal."
+    if code.startswith("PF_"):
+        return "Preflight analysis raised a risk signal."
+    return "Security signal detected."
+
+
+def _build_preflight_analysis(preflight: Dict[str, Any], planned_actions: List[str]) -> str:
+    decision = str(preflight.get("preflight_decision", "unknown"))
+    risk_summary = [str(x) for x in preflight.get("risk_summary", []) if str(x).strip()]
+    reason_codes = [str(x) for x in preflight.get("decision_reason_codes", []) if str(x).strip()]
+    verification = [str(x) for x in preflight.get("verification_requirements", []) if str(x).strip()]
+    blocked_actions = [str(x) for x in preflight.get("blocked_actions", []) if str(x).strip()]
+
+    parts = [f"Preflight decision={decision}."]
+    if planned_actions:
+        parts.append(f"Planned actions reviewed: {', '.join(planned_actions[:5])}.")
+    if risk_summary:
+        parts.append(f"Key risk signals: {', '.join(risk_summary[:3])}.")
+    elif reason_codes:
+        parts.append(
+            "Key reason codes: "
+            + ", ".join(f"{c} ({_describe_reason_code(c)})" for c in reason_codes[:3])
+            + "."
+        )
+    else:
+        parts.append("No meaningful preflight risk signals detected.")
+    if blocked_actions:
+        parts.append(f"Blocked actions: {', '.join(blocked_actions[:5])}.")
+    if verification:
+        parts.append(f"Verification requirements: {', '.join(verification[:3])}.")
+    return " ".join(parts)
+
+
+def _build_runtime_analysis(runtime: Dict[str, Any]) -> str:
+    decision = str(runtime.get("runtime_decision", "unknown"))
+    alerts = list(runtime.get("alerts", []))
+    reason_codes = [str(x) for x in runtime.get("decision_reason_codes", []) if str(x).strip()]
+    suggested_actions = [str(x) for x in runtime.get("suggested_actions", []) if str(x).strip()]
+    trust_annotations = list(runtime.get("trust_annotations", []))
+
+    parts = [f"Runtime decision={decision}."]
+    if alerts:
+        alert_msgs = [str(a.get("message", "")) for a in alerts if a.get("message")]
+        parts.append(f"Observed alerts: {', '.join(alert_msgs[:3])}.")
+    elif reason_codes:
+        parts.append(
+            "Runtime reason codes: "
+            + ", ".join(f"{c} ({_describe_reason_code(c)})" for c in reason_codes[:3])
+            + "."
+        )
+    else:
+        parts.append("No runtime anomaly alerts were triggered.")
+    if suggested_actions:
+        parts.append(f"Suggested mitigations: {', '.join(suggested_actions[:3])}.")
+    if trust_annotations:
+        source_types = sorted(set(str(t.get("source_type", "unknown")) for t in trust_annotations))
+        parts.append(f"Source types considered: {', '.join(source_types[:5])}.")
+    return " ".join(parts)
+
+
+def _build_output_analysis(output: Dict[str, Any]) -> str:
+    decision = str(output.get("output_decision", "unknown"))
+    reason_codes = [str(x) for x in output.get("decision_reason_codes", []) if str(x).strip()]
+    leakage = bool(output.get("leakage_detected", False))
+    residual = bool(output.get("residual_leakage_detected", False))
+    redaction = bool(output.get("redaction_applied", False))
+    confidence = str(output.get("confidence_level", "unknown"))
+    redaction_summary = list(output.get("redaction_summary", []))
+
+    parts = [f"Output guard decision={decision}.", f"Confidence={confidence}."]
+    if leakage:
+        parts.append("Sensitive leakage patterns were detected in candidate output.")
+    else:
+        parts.append("No leakage pattern was detected in candidate output.")
+    if redaction:
+        parts.append(f"Redaction applied with summary: {redaction_summary[:3]}.")
+    if residual:
+        parts.append("Residual leakage remained after redaction.")
+    if reason_codes:
+        parts.append(
+            "Output reason codes: "
+            + ", ".join(f"{c} ({_describe_reason_code(c)})" for c in reason_codes[:3])
+            + "."
+        )
+    return " ".join(parts)
+
+
+def _build_decision_trace(
+    preflight: Dict[str, Any],
+    runtime: Dict[str, Any],
+    output: Dict[str, Any],
+    final_action: str,
+) -> Dict[str, Any]:
+    """Build a stage-by-stage decision trace for logging and debugging."""
+    preflight_codes = list(preflight.get("decision_reason_codes", []))
+    runtime_codes = list(runtime.get("decision_reason_codes", []))
+    output_codes = list(output.get("decision_reason_codes", []))
+
+    stages = [
+        {
+            "stage": "preflight",
+            "decision": preflight.get("preflight_decision", "unknown"),
+            "triggered": preflight.get("preflight_decision") in {"downgrade", "block"},
+            "analysis": str(preflight.get("analysis", "")),
+            "reason_codes": preflight_codes,
+            "reasons": [{"code": c, "description": _describe_reason_code(c)} for c in preflight_codes],
+            "matched_rules": list(preflight.get("matched_rules", [])),
+            "evidence": {
+                "risk_summary": list(preflight.get("risk_summary", []))[:5],
+                "blocked_actions": list(preflight.get("blocked_actions", []))[:10],
+                "verification_requirements": list(preflight.get("verification_requirements", []))[:10],
+            },
+        },
+        {
+            "stage": "runtime",
+            "decision": runtime.get("runtime_decision", "unknown"),
+            "triggered": runtime.get("runtime_decision") in {"downgrade", "stop"},
+            "analysis": str(runtime.get("analysis", "")),
+            "reason_codes": runtime_codes,
+            "reasons": [{"code": c, "description": _describe_reason_code(c)} for c in runtime_codes],
+            "matched_rules": list(runtime.get("matched_rules", [])),
+            "evidence": {
+                "alerts": list(runtime.get("alerts", []))[:10],
+                "suggested_actions": list(runtime.get("suggested_actions", []))[:10],
+            },
+        },
+        {
+            "stage": "output_guard",
+            "decision": output.get("output_decision", "unknown"),
+            "triggered": output.get("output_decision") in {"downgrade", "block"},
+            "analysis": str(output.get("analysis", "")),
+            "reason_codes": output_codes,
+            "reasons": [{"code": c, "description": _describe_reason_code(c)} for c in output_codes],
+            "matched_rules": list(output.get("matched_rules", [])),
+            "evidence": {
+                "leakage_detected": bool(output.get("leakage_detected", False)),
+                "residual_leakage_detected": bool(output.get("residual_leakage_detected", False)),
+                "redaction_applied": bool(output.get("redaction_applied", False)),
+                "redaction_summary": list(output.get("redaction_summary", []))[:10],
+                "confidence_level": str(output.get("confidence_level", "unknown")),
+            },
+        },
+    ]
+
+    trigger_path = [s["stage"] for s in stages if s["triggered"]]
+    return {
+        "final_action": final_action,
+        "trigger_path": trigger_path,
+        "stage_count": len(stages),
+        "triggered_stage_count": len(trigger_path),
+        "stages": stages,
+    }
+
+
 def _build_explanation(
     preflight: Dict[str, Any],
     runtime: Dict[str, Any],
     output: Dict[str, Any],
 ) -> str:
     """Build human-readable explanation of the decision."""
-    explanations = []
+    final_action = decide_final_action(preflight, runtime, output)
+    parts: List[str] = []
 
-    if preflight.get("risk_summary"):
-        explanations.append(f"Preflight risks: {', '.join(preflight['risk_summary'][:2])}")
+    if preflight.get("preflight_decision") in {"downgrade", "block"}:
+        preflight_signals = list(preflight.get("risk_summary", []))[:2]
+        preflight_codes = list(preflight.get("decision_reason_codes", []))[:2]
+        if preflight_signals:
+            parts.append(f"Preflight signaled risk: {', '.join(preflight_signals)}")
+        elif preflight_codes:
+            parts.append(
+                "Preflight signaled risk via: "
+                + ", ".join(_describe_reason_code(c) for c in preflight_codes)
+            )
 
-    if runtime.get("alerts"):
-        alert_msgs = [a.get("message", "") for a in runtime["alerts"][:2]]
-        explanations.append(f"Runtime alerts: {', '.join(alert_msgs)}")
+    if runtime.get("runtime_decision") in {"downgrade", "stop"}:
+        alert_msgs = [str(a.get("message", "")) for a in runtime.get("alerts", []) if a.get("message")]
+        if alert_msgs:
+            parts.append(f"Runtime alerts: {', '.join(alert_msgs[:2])}")
+        else:
+            runtime_codes = list(runtime.get("decision_reason_codes", []))[:2]
+            if runtime_codes:
+                parts.append(
+                    "Runtime signaled risk via: "
+                    + ", ".join(_describe_reason_code(c) for c in runtime_codes)
+                )
 
-    if output.get("leakage_detected"):
-        explanations.append("Output guard detected sensitive leakage")
+    if output.get("output_decision") in {"downgrade", "block"}:
+        output_codes = list(output.get("decision_reason_codes", []))[:2]
+        if output.get("leakage_detected"):
+            parts.append("Output guard detected sensitive leakage patterns")
+        elif output_codes:
+            parts.append(
+                "Output guard signaled risk via: "
+                + ", ".join(_describe_reason_code(c) for c in output_codes)
+            )
 
-    return "; ".join(explanations) if explanations else "No significant risks detected"
+    if not parts:
+        return "No significant risks detected across preflight, runtime, and output guard."
+    return f"Final action '{final_action}' because " + "; ".join(parts) + "."
 
 
 def infer_sensitivity(prompt: str, events: List[Dict[str, Any]], previous_state: str, policy: Dict[str, Any]) -> Dict[str, Any]:
@@ -2416,7 +2635,7 @@ def preflight_decision(
             decision = "downgrade"
             risk_summary.append("predictive analysis indicates high risk of issues")
 
-    return {
+    result = {
         "risk_summary": risk_summary or ["no critical preflight risk"],
         "sensitivity_state": sensitivity_state,
         "allowed_actions": ["read_only", "summarize", "explain"],
@@ -2427,6 +2646,8 @@ def preflight_decision(
         "preflight_decision": decision,
         "predictive_analysis": predictive_analysis,
     }
+    result["analysis"] = _build_preflight_analysis(result, planned_actions)
+    return result
 
 
 def runtime_decision(runtime_events: List[Dict[str, Any]], sources: List[Dict[str, Any]], policy: Dict[str, Any]) -> Dict[str, Any]:
@@ -2498,7 +2719,7 @@ def runtime_decision(runtime_events: List[Dict[str, Any]], sources: List[Dict[st
         if decision == "continue":
             decision = "downgrade"
 
-    return {
+    result = {
         "runtime_events": runtime_events,
         "alerts": alerts,
         "suggested_actions": sorted(set(suggested_actions)),
@@ -2507,6 +2728,8 @@ def runtime_decision(runtime_events: List[Dict[str, Any]], sources: List[Dict[st
         "matched_rules": sorted(set(matched_rules)),
         "runtime_decision": decision,
     }
+    result["analysis"] = _build_runtime_analysis(result)
+    return result
 
 
 _PLACEHOLDER_RE = re.compile(
@@ -2669,7 +2892,7 @@ def output_guard(
     if sensitivity_state in {"sensitive", "highly_sensitive"} and decision == "allow":
         confidence = "medium"
 
-    return {
+    result = {
         "leakage_detected": leakage,
         "residual_leakage_detected": residual_leakage_detected,
         "redaction_applied": redaction_applied,
@@ -2682,6 +2905,8 @@ def output_guard(
         "source_items": source_items,
         "output_decision": decision,
     }
+    result["analysis"] = _build_output_analysis(result)
+    return result
 
 
 def decide_final_action(preflight: Dict[str, Any], runtime: Dict[str, Any], output: Dict[str, Any]) -> str:
@@ -2756,6 +2981,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Self-guard runtime hook template")
     parser.add_argument("input_json", help="Input JSON path")
     parser.add_argument("--out", default="", help="Optional summary JSON output path")
+    parser.add_argument(
+        "--emit-summary",
+        action="store_true",
+        help="Write summary JSON to --out (disabled by default; unified log is primary output)",
+    )
     parser.add_argument("--events-log", default="./sentry_skill_log/self_guard_events.jsonl", help="JSONL event log path (legacy mode)")
     parser.add_argument("--state-dir", default="./sentry_skill_log/.self_guard_state", help="Session state directory")
     parser.add_argument("--log-layout", choices=["legacy", "turn_dir", "unified"], default="unified", help="Log layout strategy (unified = single file per query)")
@@ -2926,7 +3156,8 @@ def main() -> None:
                 "trust_annotations": [],
                 "decision_reason_codes": ["PF_EARLY_EXIT_SKIP"],
                 "matched_rules": [],
-                "runtime_decision": "continue"
+                "runtime_decision": "continue",
+                "analysis": "Runtime stage skipped because preflight already returned block."
             }
             output = {
                 "leakage_detected": False,
@@ -2939,7 +3170,8 @@ def main() -> None:
                 "safe_response": "[BLOCKED_BY_PREFLIGHT]",
                 "source_disclosure": "",
                 "source_items": [],
-                "output_decision": "block"
+                "output_decision": "block",
+                "analysis": "Output stage forced to block because preflight already returned block."
             }
             # Empty predictive report for blocked case
             predictive_report_raw = {
@@ -3004,6 +3236,7 @@ def main() -> None:
             preflight.get("decision_reason_codes", []),
             preflight.get("matched_rules", []),
             {
+                "analysis": preflight.get("analysis", ""),
                 "sensitivity_state": preflight["sensitivity_state"],
                 "risk_summary": preflight["risk_summary"],
                 "verification_requirements": preflight["verification_requirements"],
@@ -3024,6 +3257,7 @@ def main() -> None:
             runtime.get("decision_reason_codes", []),
             runtime.get("matched_rules", []),
             {
+                "analysis": runtime.get("analysis", ""),
                 "runtime_event_count": len(runtime_events_list),
                 "runtime_event_types": sorted(
                     set(str(e.get("type", "unknown")).strip().lower() for e in runtime_events_list)
@@ -3046,6 +3280,7 @@ def main() -> None:
             output.get("decision_reason_codes", []),
             output.get("matched_rules", []),
             {
+                "analysis": output.get("analysis", ""),
                 "leakage_detected": output["leakage_detected"],
                 "residual_leakage_detected": output["residual_leakage_detected"],
                 "redaction_applied": output["redaction_applied"],
@@ -3077,6 +3312,8 @@ def main() -> None:
             )
 
         duration_ms = int((perf_counter() - hook_start) * 1000)
+        decision_trace = _build_decision_trace(preflight, runtime, output, final_action)
+        decision_explanation = _build_explanation(preflight, runtime, output)
 
         emit_event(
             events_sink,
@@ -3097,6 +3334,13 @@ def main() -> None:
                     "preflight_decision": preflight["preflight_decision"],
                     "runtime_decision": runtime["runtime_decision"],
                     "output_decision": output["output_decision"],
+                },
+                "decision_explanation": decision_explanation,
+                "decision_trace": decision_trace,
+                "stage_analyses": {
+                    "preflight": preflight.get("analysis", ""),
+                    "runtime": runtime.get("analysis", ""),
+                    "output_guard": output.get("analysis", ""),
                 },
                 "predictive_analysis": predictive_report_raw if PREDICTIVE_ANALYSIS_AVAILABLE else {},
                 "duration_ms": duration_ms,
@@ -3150,6 +3394,13 @@ def main() -> None:
                 "runtime_decision": runtime["runtime_decision"],
                 "output_decision": output["output_decision"],
             },
+            "decision_explanation": decision_explanation,
+            "decision_trace": decision_trace,
+            "stage_analyses": {
+                "preflight": preflight.get("analysis", ""),
+                "runtime": runtime.get("analysis", ""),
+                "output_guard": output.get("analysis", ""),
+            },
             "output_guard": {
                 "output_decision": output["output_decision"],
                 "redaction_summary": output["redaction_summary"],
@@ -3186,7 +3437,7 @@ def main() -> None:
                 retention=retention,
             )
             save_json(unified_log_path, unified_log)
-            if out_path:
+            if out_path and args.emit_summary:
                 save_json(out_path, summary)
                 print(f"Saved summary: {out_path}")
             print(f"Unified log: {unified_log_path}")
@@ -3203,6 +3454,8 @@ def main() -> None:
                 "decision_chain": summary["decision_chain"],
                 "decision_reason_codes": decision_reason_codes,
                 "matched_rules": matched_rules,
+                "decision_explanation": decision_explanation,
+                "decision_trace": decision_trace,
                 "residual_risks": sorted(set(residual_risks)),
                 "sensitivity_state": preflight["sensitivity_state"],
                 "safe_response_preview": excerpt(output["safe_response"], 200),
@@ -3229,7 +3482,7 @@ def main() -> None:
                     "result_path": str(turn_result_path),
                 },
             )
-            if out_path:
+            if out_path and args.emit_summary:
                 save_json(out_path, summary)
                 print(f"Saved summary: {out_path}")
             print(f"Turn dir: {turn_dir}")
@@ -3237,7 +3490,7 @@ def main() -> None:
             print(f"Index log path: {index_log}")
             print(f"Updated session state: {state_path}")
         else:
-            if out_path:
+            if out_path and args.emit_summary:
                 save_json(out_path, summary)
                 print(f"Saved summary: {out_path}")
             print(f"Appended events: {events_log}")

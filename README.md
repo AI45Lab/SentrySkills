@@ -22,6 +22,7 @@ SentrySkills protects AI agents from:
 - **7 risk predictors** - Anticipates problems before execution
 - **Policy profiles** - Balanced, strict, permissive modes
 - **Full traceability** - JSONL event logs
+- **Stage-level explainability** - Per-stage analysis for preflight/runtime/output guard
 
 ## 📥 Installation
 
@@ -113,6 +114,29 @@ sentry-skills/
 - **Balanced** (default): Standard security
 - **Strict**: Maximum security
 - **Permissive**: Minimal interference
+
+## 🧾 Logging & Explainability
+
+SentrySkills emits detailed decision context at both final and stage levels:
+
+- `decision_explanation`: Human-readable explanation of why `final_action` was produced.
+- `decision_trace`: Stage-by-stage chain (`preflight`, `runtime`, `output_guard`) with stage decision, reason codes, matched rules, evidence, and per-stage `analysis`.
+- `stage_analyses`: Flattened stage analysis texts for quick inspection.
+
+### Default Output Behavior
+
+- **Default**: Write only unified detailed log (`./sentry_skill_log/logs/*.json`).
+- **Optional summary**: If you still need summary JSON, pass both `--out <path>` and `--emit-summary`.
+
+Example:
+
+```bash
+python shared/scripts/self_guard_runtime_hook_template.py \
+  ./sentry_skill_log/input.json \
+  --policy-profile balanced \
+  --out ./sentry_skill_log/result.json \
+  --emit-summary
+```
 
 ## 🔄 Skill Package Execution Flow
 

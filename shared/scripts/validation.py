@@ -175,6 +175,48 @@ def sanitize_input(payload: Dict[str, Any]) -> Dict[str, Any]:
         else:
             sanitized["candidate_response"] = str(response)[:1_000_000]
 
+    # Preserve framework-provided model stage payload for post-rule model evaluation
+    if "model_stage" in payload and isinstance(payload["model_stage"], dict):
+        model_stage = payload["model_stage"]
+        clean_model_stage: Dict[str, Any] = {}
+        if "action" in model_stage:
+            clean_model_stage["action"] = str(model_stage["action"])[:100]
+        for key in ["analysis"]:
+            if key in model_stage:
+                clean_model_stage[key] = str(model_stage[key])[:20_000].replace("\x00", "")
+        for key in ["reason_codes", "findings"]:
+            if key in model_stage and isinstance(model_stage[key], list):
+                clean_model_stage[key] = [str(x)[:1000] for x in model_stage[key][:100]]
+        for key in ["rule_candidates", "memory_candidates"]:
+            if key in model_stage and isinstance(model_stage[key], list):
+                clean_items = []
+                for item in model_stage[key][:50]:
+                    if not isinstance(item, dict):
+                        continue
+                    clean_item: Dict[str, Any] = {}
+                    for item_key, item_value in item.items():
+                        if isinstance(item_value, str):
+                            clean_item[item_key] = item_value[:5000].replace("\x00", "")
+                        elif isinstance(item_value, list):
+                            clean_item[item_key] = [str(x)[:1000] for x in item_value[:50]]
+                        else:
+                            clean_item[item_key] = item_value
+                    clean_items.append(clean_item)
+                clean_model_stage[key] = clean_items
+        sanitized["model_stage"] = clean_model_stage
+
+    if "model_dispatch_mode" in payload:
+        sanitized["model_dispatch_mode"] = str(payload["model_dispatch_mode"])[:100]
+
+    if "pending_model_task" in payload and isinstance(payload["pending_model_task"], dict):
+        clean_pending: Dict[str, Any] = {}
+        for key, value in payload["pending_model_task"].items():
+            if isinstance(value, str):
+                clean_pending[key] = value[:1000].replace("\x00", "")
+            else:
+                clean_pending[key] = value
+        sanitized["pending_model_task"] = clean_pending
+
     return sanitized
 
 

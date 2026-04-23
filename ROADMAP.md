@@ -202,7 +202,7 @@ def test_preflight_risk_assessment(prompt, action, expected):
      sentryskills:
        build: .
        volumes:
-         - ./sentry_skill_log:/app/sentry_skill_log
+         - ./.sentryskills/base:/app/.sentryskills/base
    ```
 
 **Use Cases**:

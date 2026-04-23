@@ -5,6 +5,44 @@ All notable changes to SentrySkills will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-04-23
+
+### Added
+
+- **Rule-First Runtime State Fields**:
+  - Added `model_dispatch_mode` to distinguish `skipped | sync | async`
+  - Added `model_stage_status` to distinguish `skipped | pending | completed`
+  - Added `knowledge_writeback_status` to distinguish `skipped | pending_model_result | completed | failed`
+  - Added `pending_model_task` metadata for deferred model-stage execution
+
+### Changed
+
+- **Execution Architecture**:
+  - Refactored the runtime contract to `base_rule -> extra_rule -> rule_gate -> model_stage -> knowledge_writeback`
+  - `base_rule` and `extra_rule` now form a strict synchronous frontend
+  - `model_stage` is now conditional and only entered when the rule stage does not block
+  - `knowledge_writeback` is now restricted to completed model-stage results
+- **Default Dispatch Semantics**:
+  - `rule_stage_action == block` now terminates the turn immediately
+  - `rule_stage_action == downgrade` now defaults to synchronous `model_stage`
+  - `rule_stage_action == allow` now defaults to asynchronous `model_stage` semantics unless the framework provides a synchronous result
+- **Workspace-Local Runtime Storage**:
+  - Base runtime outputs are now standardized under `.sentryskills/base/`
+  - Extra runtime knowledge is now standardized under `.sentryskills/extra/`
+- **Documentation System**:
+  - Rewrote `README.md`, `SKILL.md`, `using-sentryskills/SKILL.md`, and `sentryskills-extra/SKILL.md` to match the new architecture
+  - Rewrote framework installation guides for Claude Code, Codex, and OpenClaw around rule-first execution
+  - Replaced the simplified docs landing page with a bilingual visual homepage that includes right-top language toggle and new-version architecture content
+- **Agent Guidance**:
+  - Reworked `AGENTS.template.md` to enforce rule-first behavior, model-stage boundaries, and post-model knowledge synthesis constraints
+
+### Removed
+
+- **Old Whole-Pipeline Two-Path Narrative**:
+  - Removed documentation references to HIGH/LOW full-pipeline routing as the primary architecture
+  - Removed outdated orchestrator terminology from top-level documentation
+  - Removed remaining references to legacy runtime path names such as `sentry_skill_log` and `hook_result_*.json` in the current documentation set
+
 ## [0.1.7] - 2026-04-08
 
 ### Added
@@ -399,7 +437,7 @@ sentryskills-orchestrator/SKILL.md → Orchestration, execution modes
 - Exit codes: 0 (allow), 2 (block)
 
 **Logging**:
-- All hook executions logged to `sentry_skill_log/hook_result_*.json`
+- All hook executions logged to `.sentryskills/base/hook_result_*.json`
 - Each log includes: session_id, turn_id, trace_id, final_action, matched_rules
 
 **Migration Notes**:

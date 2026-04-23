@@ -54,6 +54,21 @@ except ImportError as e:
     logger.warning(f"Predictive analysis module not available: {e}")
     PREDICTIVE_ANALYSIS_AVAILABLE = False
 
+try:
+    from extra_guard import (
+        ensure_extra_storage,
+        evaluate_extra_rules,
+        load_extra_state,
+        merge_action as merge_extra_action,
+        parse_model_stage,
+        synthesize_knowledge_from_model_stage,
+        writeback_model_knowledge,
+    )
+    EXTRA_GUARD_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Extra guard module not available: {e}")
+    EXTRA_GUARD_AVAILABLE = False
+
 import contextlib
 
 @contextlib.contextmanager
@@ -1973,6 +1988,7 @@ def build_unified_log(
     final_action: str,
     sensitivity_inference: Dict[str, Any],
     retention: Dict[str, Any],
+    extra_layer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a unified single-file log record for the entire query lifecycle."""
 
@@ -1981,11 +1997,14 @@ def build_unified_log(
         set(preflight.get("decision_reason_codes", []))
         | set(runtime.get("decision_reason_codes", []))
         | set(output.get("decision_reason_codes", []))
+        | set(extra_layer.get("extra_rule_reason_codes", []) if extra_layer else [])
+        | set(extra_layer.get("model_stage_reason_codes", []) if extra_layer else [])
     )
     matched_rules = sorted(
         set(preflight.get("matched_rules", []))
         | set(runtime.get("matched_rules", []))
         | set(output.get("matched_rules", []))
+        | set(extra_layer.get("extra_rule_matched_rules", []) if extra_layer else [])
     )
 
     # Build residual risks
@@ -2105,6 +2124,41 @@ def build_unified_log(
             "retention": retention,
         },
     }
+
+    if extra_layer:
+        unified_log["extra"] = {
+            "rule_stage": {
+                "decision": extra_layer.get("extra_rule_action", "allow"),
+                "reason_codes": extra_layer.get("extra_rule_reason_codes", []),
+                "matched_rules": extra_layer.get("extra_rule_matched_rules", []),
+                "observations": extra_layer.get("extra_rule_observations", []),
+            },
+            "model_stage": {
+                "entered": extra_layer.get("model_stage_entered", False),
+                "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                "status": extra_layer.get("model_stage_status", "skipped"),
+                "action": extra_layer.get("model_stage_action", "skipped"),
+                "reason_codes": extra_layer.get("model_stage_reason_codes", []),
+                "analysis": extra_layer.get("model_stage_analysis", ""),
+                "findings": extra_layer.get("model_stage_findings", []),
+                "pending_model_task": extra_layer.get("pending_model_task", {}),
+            },
+            "knowledge_layer": {
+                "status": extra_layer.get("knowledge_writeback_status", "skipped"),
+                "dedup_summary": extra_layer.get("dedup_summary", {}),
+                "validation_summary": extra_layer.get("validation_summary", {}),
+                "knowledge_writeback": extra_layer.get("knowledge_writeback", {}),
+                "knowledge_item_ids": extra_layer.get("knowledge_item_ids", []),
+                "storage_paths": extra_layer.get("storage_paths", {}),
+            },
+        }
+        unified_log["final"]["base_rule_action"] = extra_layer.get("base_rule_action", final_action)
+        unified_log["final"]["rule_stage_action"] = extra_layer.get("rule_stage_action", final_action)
+        unified_log["final"]["model_dispatch_mode"] = extra_layer.get("model_dispatch_mode", "skipped")
+        unified_log["final"]["model_stage_status"] = extra_layer.get("model_stage_status", "skipped")
+        unified_log["final"]["model_stage_action"] = extra_layer.get("model_stage_action", "skipped")
+        unified_log["final"]["knowledge_writeback_status"] = extra_layer.get("knowledge_writeback_status", "skipped")
+        unified_log["final"]["merged_action"] = final_action
 
     return unified_log
 
@@ -2986,12 +3040,12 @@ def main() -> None:
         action="store_true",
         help="Write summary JSON to --out (disabled by default; unified log is primary output)",
     )
-    parser.add_argument("--events-log", default="./sentry_skill_log/self_guard_events.jsonl", help="JSONL event log path (legacy mode)")
-    parser.add_argument("--state-dir", default="./sentry_skill_log/.self_guard_state", help="Session state directory")
+    parser.add_argument("--events-log", default="./.sentryskills/base/self_guard_events.jsonl", help="JSONL event log path (legacy mode)")
+    parser.add_argument("--state-dir", default="./.sentryskills/base/.self_guard_state", help="Session state directory")
     parser.add_argument("--log-layout", choices=["legacy", "turn_dir", "unified"], default="unified", help="Log layout strategy (unified = single file per query)")
-    parser.add_argument("--turns-dir", default="./sentry_skill_log/turns", help="Per-turn log root directory")
-    parser.add_argument("--index-log", default="./sentry_skill_log/index.jsonl", help="Lightweight per-turn index JSONL")
-    parser.add_argument("--unified-log-dir", default="./sentry_skill_log/logs", help="Unified log directory (single file per query)")
+    parser.add_argument("--turns-dir", default="./.sentryskills/base/turns", help="Per-turn log root directory")
+    parser.add_argument("--index-log", default="./.sentryskills/base/index.jsonl", help="Lightweight per-turn index JSONL")
+    parser.add_argument("--unified-log-dir", default="./.sentryskills/base/logs", help="Unified log directory (single file per query)")
     parser.add_argument("--policy", default=None, help="Optional runtime policy JSON path")
     parser.add_argument("--policy-profile", default="balanced", help="Policy profile tag for audit")
     parser.add_argument("--strict-validation", action="store_true", help="Enable strict input validation")
@@ -3059,7 +3113,7 @@ def main() -> None:
                 "input": str(args.input_json),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
-            error_log_path = Path("./sentry_skill_log/logs/error.json")
+            error_log_path = Path("./.sentryskills/base/logs/error.json")
             error_log_path.parent.mkdir(parents=True, exist_ok=True)
             save_json(error_log_path, error_log)
         except Exception:
@@ -3186,25 +3240,159 @@ def main() -> None:
             # Normal flow for non-blocked cases
             runtime = runtime_decision(runtime_events_list, sources_list, policy)
 
-            # Run predictive analysis AFTER all detection rules pass
-            # This predicts latent risks that may materialise during execution
-            predictive_report_raw = {"overall_risk_level": "none", "predicted_risks": [], "top_concerns": [], "recommended_actions": [], "confidence_summary": 0.0}
-            if PREDICTIVE_ANALYSIS_AVAILABLE and preflight["preflight_decision"] != "block":
-                try:
-                    # conv_history already loaded from state_path above
-                    predictive_report_result = predict_risks(
-                        user_prompt=user_prompt,
-                        planned_actions=planned_actions,
-                        conversation_history=conv_history,
-                    )
-                    predictive_report_raw = predictive_report_result.to_dict()
-                    logger.info(f"Predictive analysis completed: risk_level={predictive_report_raw['overall_risk_level']}, risks_found={len(predictive_report_raw['predicted_risks'])}")
-                except Exception as pa_exc:
-                    logger.warning(f"Predictive analysis failed: {pa_exc}")
-
             output = output_guard(candidate_response, preflight["sensitivity_state"], runtime["trust_annotations"], policy, leak_patterns)
 
-        final_action = decide_final_action(preflight, runtime, output)
+        base_rule_action = decide_final_action(preflight, runtime, output)
+        base_rule_reason_codes = sorted(
+            set(preflight.get("decision_reason_codes", []))
+            | set(runtime.get("decision_reason_codes", []))
+            | set(output.get("decision_reason_codes", []))
+        )
+        base_rule_matched_rules = sorted(
+            set(preflight.get("matched_rules", []))
+            | set(runtime.get("matched_rules", []))
+            | set(output.get("matched_rules", []))
+        )
+
+        initial_extra_paths = ensure_extra_storage(project_root) if EXTRA_GUARD_AVAILABLE else {}
+        extra_state = {
+            "paths": initial_extra_paths,
+            "active_rules": [],
+            "candidate_rules": [],
+            "textual_memory": [],
+        }
+        extra_layer = {
+            "base_rule_action": base_rule_action,
+            "base_rule_reason_codes": base_rule_reason_codes,
+            "base_rule_matched_rules": base_rule_matched_rules,
+            "extra_rule_action": "allow",
+            "extra_rule_reason_codes": [],
+            "extra_rule_matched_rules": [],
+            "extra_rule_observations": [],
+            "rule_stage_action": base_rule_action,
+            "model_stage_entered": False,
+            "model_dispatch_mode": "skipped",
+            "model_stage_status": "skipped",
+            "model_stage_action": "skipped",
+            "model_stage_reason_codes": [],
+            "model_stage_analysis": "Model stage skipped because rule stage already resolved the decision.",
+            "model_stage_findings": [],
+            "pending_model_task": {},
+            "dedup_summary": {},
+            "validation_summary": {},
+            "knowledge_writeback_status": "skipped",
+            "knowledge_writeback": {"writeback_executed": False, "skipped_reason": "rule_stage_resolved"},
+            "knowledge_item_ids": [],
+            "storage_paths": {k: str(v) for k, v in extra_state.get("paths", {}).items()},
+        }
+        if EXTRA_GUARD_AVAILABLE:
+            try:
+                extra_state = load_extra_state(project_root)
+                extra_layer["storage_paths"] = {k: str(v) for k, v in extra_state.get("paths", {}).items()}
+                extra_rule_result = evaluate_extra_rules(payload, list(extra_state.get("active_rules", [])))
+                extra_layer.update(extra_rule_result)
+            except Exception as extra_exc:
+                logger.warning(f"Extra rule stage failed and will be skipped: {extra_exc}")
+                extra_layer["extra_rule_reason_codes"] = ["EXTRA_RULE_STAGE_ERROR"]
+                extra_layer["extra_rule_observations"] = [{"error": str(extra_exc)}]
+
+        rule_stage_action = merge_extra_action(base_rule_action, extra_layer.get("extra_rule_action", "allow"))
+        extra_layer["rule_stage_action"] = rule_stage_action
+
+        model_stage = {
+            "model_stage_action": "skipped",
+            "model_stage_reason_codes": [],
+            "model_stage_analysis": "Model stage skipped because rule stage did not end in allow.",
+            "model_stage_findings": [],
+            "model_stage_present": False,
+        }
+        predictive_report_raw = {"overall_risk_level": "none", "predicted_risks": [], "top_concerns": [], "recommended_actions": [], "confidence_summary": 0.0}
+        model_dispatch_mode = str(payload.get("model_dispatch_mode", "")).strip().lower()
+        if model_dispatch_mode not in {"sync", "async"}:
+            model_dispatch_mode = "async" if rule_stage_action == "allow" else "sync" if rule_stage_action == "downgrade" else "skipped"
+
+        if rule_stage_action != "block":
+            extra_layer["model_stage_entered"] = True
+            extra_layer["model_dispatch_mode"] = model_dispatch_mode
+            model_stage = parse_model_stage(payload) if EXTRA_GUARD_AVAILABLE else model_stage
+            has_model_result = bool(model_stage.get("model_stage_present", False))
+            if model_dispatch_mode == "async" and not has_model_result:
+                extra_layer["model_stage_status"] = "pending"
+                extra_layer["model_stage_action"] = "pending"
+                extra_layer["model_stage_analysis"] = "Model stage deferred to async/subagent execution. Current turn keeps the rule-stage decision."
+                extra_layer["pending_model_task"] = {
+                    "task_id": f"model-task:{turn_id}",
+                    "dispatch_mode": "async",
+                    "created_at": now_iso(),
+                    "source_turn_id": turn_id,
+                }
+                extra_layer["knowledge_writeback_status"] = "pending_model_result"
+                extra_layer["knowledge_writeback"] = {
+                    "writeback_executed": False,
+                    "skipped_reason": "pending_model_result",
+                    "knowledge_source": "model_stage",
+                }
+            else:
+                extra_layer["model_stage_status"] = "completed" if has_model_result else "skipped"
+                if not has_model_result:
+                    extra_layer["model_stage_analysis"] = "Model stage was expected but no framework model result was provided. Current turn keeps the rule-stage decision."
+                    extra_layer["model_stage_action"] = "skipped"
+                    extra_layer["knowledge_writeback_status"] = "skipped"
+                    extra_layer["knowledge_writeback"] = {
+                        "writeback_executed": False,
+                        "skipped_reason": "model_stage_missing",
+                        "knowledge_source": "model_stage",
+                    }
+                else:
+                    if PREDICTIVE_ANALYSIS_AVAILABLE:
+                        try:
+                            predictive_report_result = predict_risks(
+                                user_prompt=user_prompt,
+                                planned_actions=planned_actions,
+                                conversation_history=conv_history,
+                            )
+                            predictive_report_raw = predictive_report_result.to_dict()
+                            logger.info(f"Predictive analysis completed: risk_level={predictive_report_raw['overall_risk_level']}, risks_found={len(predictive_report_raw['predicted_risks'])}")
+                        except Exception as pa_exc:
+                            logger.warning(f"Predictive analysis failed: {pa_exc}")
+                    extra_layer["model_stage_action"] = str(model_stage.get("model_stage_action", "allow"))
+                    extra_layer["model_stage_reason_codes"] = list(model_stage.get("model_stage_reason_codes", []))
+                    extra_layer["model_stage_analysis"] = str(model_stage.get("model_stage_analysis", "Model stage executed."))
+                    extra_layer["model_stage_findings"] = list(model_stage.get("model_stage_findings", []))
+
+                    if EXTRA_GUARD_AVAILABLE:
+                        try:
+                            model_knowledge = synthesize_knowledge_from_model_stage(model_stage, turn_id)
+                            writeback_result = writeback_model_knowledge(
+                                project_root=project_root,
+                                trace_id=trace_id,
+                                turn_id=turn_id,
+                                active_rules=list(extra_state.get("active_rules", [])),
+                                candidate_rules=list(extra_state.get("candidate_rules", [])),
+                                textual_memory=list(extra_state.get("textual_memory", [])),
+                                model_knowledge=model_knowledge,
+                            )
+                            extra_layer.update(writeback_result)
+                            extra_layer["knowledge_writeback_status"] = "completed"
+                            if not model_knowledge.get("rule_candidates") and not model_knowledge.get("memory_candidates"):
+                                extra_layer["knowledge_writeback_status"] = "skipped"
+                                extra_layer["knowledge_writeback"] = {
+                                    "writeback_executed": False,
+                                    "skipped_reason": "model_stage_no_new_knowledge",
+                                    "knowledge_source": "model_stage",
+                                }
+                        except Exception as writeback_exc:
+                            logger.warning(f"Extra knowledge writeback failed and will be skipped: {writeback_exc}")
+                            extra_layer["knowledge_writeback_status"] = "failed"
+                            extra_layer["knowledge_writeback"] = {
+                                "writeback_executed": False,
+                                "skipped_reason": "writeback_error",
+                                "error": str(writeback_exc),
+                            }
+
+        final_action = rule_stage_action
+        if extra_layer.get("model_stage_status") == "completed":
+            final_action = merge_extra_action(rule_stage_action, extra_layer.get("model_stage_action", "allow"))
 
         residual_risks: List[str] = []
         if output["leakage_detected"]:
@@ -3221,6 +3409,12 @@ def main() -> None:
             set(preflight.get("matched_rules", []))
             | set(runtime.get("matched_rules", []))
             | set(output.get("matched_rules", []))
+            | set(extra_layer.get("extra_rule_matched_rules", []))
+        )
+        decision_reason_codes = sorted(
+            set(decision_reason_codes)
+            | set(extra_layer.get("extra_rule_reason_codes", []))
+            | set(extra_layer.get("model_stage_reason_codes", []))
         )
 
         retention = build_retention_snapshot(policy, final_action, user_prompt, output["safe_response"])
@@ -3294,7 +3488,7 @@ def main() -> None:
         )
 
         # Emit predictive analysis results (if available)
-        if PREDICTIVE_ANALYSIS_AVAILABLE:
+        if PREDICTIVE_ANALYSIS_AVAILABLE and extra_layer.get("model_stage_entered", False):
             predict_reason_codes = []
             if predictive_report_raw.get("overall_risk_level") in ("medium", "high"):
                 predict_reason_codes.append(f"PREDICTIVE_RISK_{predictive_report_raw['overall_risk_level'].upper()}")
@@ -3309,6 +3503,68 @@ def main() -> None:
                 predict_reason_codes,
                 [r["category"] for r in predictive_report_raw.get("predicted_risks", [])],
                 predictive_report_raw,
+            )
+
+        if extra_layer.get("extra_rule_reason_codes") or extra_layer.get("extra_rule_matched_rules"):
+            emit_event(
+                events_sink,
+                trace_id,
+                session_id,
+                turn_id,
+                str(args.policy_profile),
+                "extra_rule_result",
+                str(extra_layer.get("extra_rule_action", "allow")),
+                list(extra_layer.get("extra_rule_reason_codes", [])),
+                list(extra_layer.get("extra_rule_matched_rules", [])),
+                {
+                    "base_rule_action": base_rule_action,
+                    "rule_stage_action": rule_stage_action,
+                    "observations": extra_layer.get("extra_rule_observations", []),
+                },
+            )
+        if extra_layer.get("model_stage_entered", False):
+            emit_event(
+                events_sink,
+                trace_id,
+                session_id,
+                turn_id,
+                str(args.policy_profile),
+                "model_stage_result",
+                str(extra_layer.get("model_stage_action", "skipped")),
+                list(extra_layer.get("model_stage_reason_codes", [])),
+                [],
+                {
+                    "rule_stage_action": rule_stage_action,
+                    "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                    "status": extra_layer.get("model_stage_status", "skipped"),
+                    "analysis": extra_layer.get("model_stage_analysis", ""),
+                    "findings": extra_layer.get("model_stage_findings", []),
+                    "model_stage_present": model_stage.get("model_stage_present", False),
+                    "pending_model_task": extra_layer.get("pending_model_task", {}),
+                },
+            )
+        if extra_layer.get("knowledge_writeback", {}).get("writeback_executed") or extra_layer.get("knowledge_writeback", {}).get("skipped_reason"):
+            emit_event(
+                events_sink,
+                trace_id,
+                session_id,
+                turn_id,
+                str(args.policy_profile),
+                "knowledge_writeback_result",
+                "writeback" if extra_layer.get("knowledge_writeback", {}).get("writeback_executed") else "skipped",
+                [],
+                [],
+                {
+                    "rule_stage_action": rule_stage_action,
+                    "model_stage_entered": extra_layer.get("model_stage_entered", False),
+                    "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                    "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                    "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
+                    "dedup_summary": extra_layer.get("dedup_summary", {}),
+                    "validation_summary": extra_layer.get("validation_summary", {}),
+                    "knowledge_writeback": extra_layer.get("knowledge_writeback", {}),
+                    "knowledge_item_ids": extra_layer.get("knowledge_item_ids", []),
+                },
             )
 
         duration_ms = int((perf_counter() - hook_start) * 1000)
@@ -3334,6 +3590,13 @@ def main() -> None:
                     "preflight_decision": preflight["preflight_decision"],
                     "runtime_decision": runtime["runtime_decision"],
                     "output_decision": output["output_decision"],
+                    "base_rule_action": base_rule_action,
+                    "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
+                    "rule_stage_action": rule_stage_action,
+                    "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                    "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                    "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+                    "final_action": final_action,
                 },
                 "decision_explanation": decision_explanation,
                 "decision_trace": decision_trace,
@@ -3341,6 +3604,30 @@ def main() -> None:
                     "preflight": preflight.get("analysis", ""),
                     "runtime": runtime.get("analysis", ""),
                     "output_guard": output.get("analysis", ""),
+                },
+                "extra_layer": {
+                    "rule_stage": {
+                        "action": extra_layer.get("extra_rule_action", "allow"),
+                        "reason_codes": extra_layer.get("extra_rule_reason_codes", []),
+                        "matched_rules": extra_layer.get("extra_rule_matched_rules", []),
+                        "observations": extra_layer.get("extra_rule_observations", []),
+                    },
+                    "model_stage": {
+                        "entered": extra_layer.get("model_stage_entered", False),
+                        "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                        "status": extra_layer.get("model_stage_status", "skipped"),
+                        "action": extra_layer.get("model_stage_action", "skipped"),
+                        "reason_codes": extra_layer.get("model_stage_reason_codes", []),
+                        "analysis": extra_layer.get("model_stage_analysis", ""),
+                        "findings": extra_layer.get("model_stage_findings", []),
+                        "pending_model_task": extra_layer.get("pending_model_task", {}),
+                    },
+                    "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
+                    "dedup_summary": extra_layer.get("dedup_summary", {}),
+                    "validation_summary": extra_layer.get("validation_summary", {}),
+                    "knowledge_writeback": extra_layer.get("knowledge_writeback", {}),
+                    "knowledge_item_ids": extra_layer.get("knowledge_item_ids", []),
+                    "storage_paths": extra_layer.get("storage_paths", {}),
                 },
                 "predictive_analysis": predictive_report_raw if PREDICTIVE_ANALYSIS_AVAILABLE else {},
                 "duration_ms": duration_ms,
@@ -3385,6 +3672,14 @@ def main() -> None:
             "turn_id": turn_id,
             "trace_id": trace_id,
             "policy_profile": str(args.policy_profile),
+            "base_rule_action": base_rule_action,
+            "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
+            "rule_stage_action": rule_stage_action,
+            "model_stage_entered": extra_layer.get("model_stage_entered", False),
+            "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+            "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+            "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+            "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
             "final_action": final_action,
             "decision_reason_codes": decision_reason_codes,
             "matched_rules": matched_rules,
@@ -3393,6 +3688,13 @@ def main() -> None:
                 "preflight_decision": preflight["preflight_decision"],
                 "runtime_decision": runtime["runtime_decision"],
                 "output_decision": output["output_decision"],
+                "base_rule_action": base_rule_action,
+                "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
+                "rule_stage_action": rule_stage_action,
+                "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+                "final_action": final_action,
             },
             "decision_explanation": decision_explanation,
             "decision_trace": decision_trace,
@@ -3400,6 +3702,30 @@ def main() -> None:
                 "preflight": preflight.get("analysis", ""),
                 "runtime": runtime.get("analysis", ""),
                 "output_guard": output.get("analysis", ""),
+            },
+            "extra_layer": {
+                "rule_stage": {
+                    "action": extra_layer.get("extra_rule_action", "allow"),
+                    "reason_codes": extra_layer.get("extra_rule_reason_codes", []),
+                    "matched_rules": extra_layer.get("extra_rule_matched_rules", []),
+                    "observations": extra_layer.get("extra_rule_observations", []),
+                },
+                "model_stage": {
+                    "entered": extra_layer.get("model_stage_entered", False),
+                    "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                    "status": extra_layer.get("model_stage_status", "skipped"),
+                    "action": extra_layer.get("model_stage_action", "skipped"),
+                    "reason_codes": extra_layer.get("model_stage_reason_codes", []),
+                    "analysis": extra_layer.get("model_stage_analysis", ""),
+                    "findings": extra_layer.get("model_stage_findings", []),
+                    "pending_model_task": extra_layer.get("pending_model_task", {}),
+                },
+                "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
+                "dedup_summary": extra_layer.get("dedup_summary", {}),
+                "validation_summary": extra_layer.get("validation_summary", {}),
+                "knowledge_writeback": extra_layer.get("knowledge_writeback", {}),
+                "knowledge_item_ids": extra_layer.get("knowledge_item_ids", []),
+                "storage_paths": extra_layer.get("storage_paths", {}),
             },
             "output_guard": {
                 "output_decision": output["output_decision"],
@@ -3435,6 +3761,7 @@ def main() -> None:
                 final_action=final_action,
                 sensitivity_inference=sens,
                 retention=retention,
+                extra_layer=extra_layer,
             )
             save_json(unified_log_path, unified_log)
             if out_path and args.emit_summary:
@@ -3449,6 +3776,12 @@ def main() -> None:
                 "turn_id": turn_id,
                 "trace_id": trace_id,
                 "policy_profile": str(args.policy_profile),
+                "base_rule_action": base_rule_action,
+                "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
+                "rule_stage_action": rule_stage_action,
+                "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
                 "final_action": final_action,
                 "duration_ms": duration_ms,
                 "decision_chain": summary["decision_chain"],
@@ -3461,6 +3794,7 @@ def main() -> None:
                 "safe_response_preview": excerpt(output["safe_response"], 200),
                 "redaction_summary": output["redaction_summary"],
                 "retention": retention,
+                "extra_layer": summary["extra_layer"],
                 "input_path": str(turn_input_path),
                 "turn_dir": str(turn_dir),
             }
@@ -3473,10 +3807,17 @@ def main() -> None:
                     "turn_id": turn_id,
                     "trace_id": trace_id,
                     "policy_profile": str(args.policy_profile),
+                    "base_rule_action": base_rule_action,
+                    "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
+                    "rule_stage_action": rule_stage_action,
+                    "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                    "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                    "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
                     "final_action": final_action,
                     "reason_codes": decision_reason_codes,
                     "matched_rules": matched_rules,
                     "duration_ms": duration_ms,
+                    "knowledge_item_ids": extra_layer.get("knowledge_item_ids", []),
                     "turn_dir": str(turn_dir),
                     "input_path": str(turn_input_path),
                     "result_path": str(turn_result_path),

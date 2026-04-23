@@ -46,6 +46,7 @@ htmlcov/
 # SentrySkills specific
 .codex/
 ./.codex/
+.sentryskills/
 sentry_skill_log/
 logs/
 results/
@@ -64,3 +65,12 @@ Thumbs.db
 *.zip
 
 .claude
+
+# Research (unpublished paper drafts, experiments, notes)
+research
+
+input.json
+
+result.json
+
+PURPOSE.md

@@ -93,7 +93,8 @@ def copy_skills(project_root: Path, build_dir: Path) -> bool:
         "using-sentryskills",
         "sentryskills-preflight",
         "sentryskills-runtime",
-        "sentryskills-output"
+        "sentryskills-output",
+        "sentryskills-extra",
     ]
 
     try:

@@ -1,16 +1,32 @@
-# SentrySkills - Automatic Security Protection
+# SentrySkills - Rule-First Execution Policy
 
-Before EVERY response:
+Before every task, apply SentrySkills in this order:
 
-1. Run the SentrySkills pre-flight check:
-   /using-sentryskills
+1. Run `/using-sentryskills` first.
+2. Complete the rule-first frontend before any model-heavy reasoning:
+   - `base_rule`
+   - `extra_rule`
+   - `rule_gate`
+3. If `rule_stage_action == block`:
+   - stop immediately
+   - refuse the request
+   - do not use subagents
+   - do not summarize new rules or memories
+4. If `rule_stage_action != block`:
+   - model-stage work is allowed
+   - subagents may only be used for `model_stage`, never before rule gating
+5. Only after `model_stage` completes may you:
+   - synthesize new extra rules
+   - write textual memory
+   - run dedup / validation / promotion
+6. If there is a pending async model task from a previous turn, check it before continuing the new turn.
 
-2. Based on the result:
-   - If blocked: Refuse the request and explain why
-   - If allowed with warnings: Include warnings in response
-   - If allowed: Proceed normally
+When reporting the decision, include:
 
-3. Include in your response:
-   - sentryskills_decision: <block|allow|downgrade>
-   - sentryskills_trace_id: <trace_id_from_result>
-
+- `sentryskills_trace_id`
+- `base_rule_action`
+- `extra_rule_action`
+- `rule_stage_action`
+- `model_dispatch_mode`
+- `model_stage_status`
+- `final_action`

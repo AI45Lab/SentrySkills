@@ -32,7 +32,7 @@ if sys.platform == "win32":
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 HOOK_SCRIPT = SCRIPT_DIR / "self_guard_runtime_hook_template.py"
-LOG_DIR = PROJECT_ROOT / "sentry_skill_log"
+LOG_DIR = PROJECT_ROOT / ".sentryskills" / "base"
 
 # High-risk tool names that should always be checked
 HIGH_RISK_TOOLS = {"Bash", "Write", "Edit", "NotebookEdit"}

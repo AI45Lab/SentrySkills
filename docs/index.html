@@ -572,8 +572,9 @@
       <div class="pipeline">base_rule
   -&gt; extra_rule
   -&gt; rule_gate
+  -&gt; risk_assessment
   -&gt; model_stage(sync | async)
-  -&gt; knowledge_writeback</div>
+  -&gt; proposal_sweep(end_of_task)</div>
       <div class="pipeline-legend">
         <div class="legend-row">
           <span class="legend-pill pill-blue" data-i18n="panel.legend1.badge">Always on</span>
@@ -595,7 +596,7 @@
     <div class="section-head">
       <div class="section-tag" data-i18n="flow.tag">Execution Flow</div>
       <h2 class="section-title" data-i18n="flow.title">A pipeline built for strict ordering</h2>
-      <p class="section-sub" data-i18n="flow.sub">The new version is no longer a full-chain HIGH/LOW split. It is a rule-first frontend with a conditional model backend.</p>
+      <p class="section-sub" data-i18n="flow.sub">The new version is no longer a full-chain HIGH/LOW split. It is a rule-first frontend plus risk-gated model dispatch.</p>
     </div>
     <div class="flow-grid">
       <div class="card flow-step">
@@ -632,21 +633,21 @@
       <div class="card flow-step">
         <div class="flow-num">04</div>
         <div class="mono">model_stage</div>
-        <h3 data-i18n="flow.model.title">Conditional model backend</h3>
-        <p data-i18n="flow.model.desc">Only entered if the rule stage does not block. `downgrade` defaults to sync; `allow` defaults to async when the framework can support it.</p>
+        <h3 data-i18n="flow.model.title">Risk-gated model backend</h3>
+        <p data-i18n="flow.model.desc">Only entered if the rule stage does not block. The skill or framework must first assign a risk level: high risk stays sync; only low-risk turns may use async when the framework supports it.</p>
         <div class="tags">
-          <span class="tag warn" data-i18n="flow.model.tag1">sync on downgrade</span>
-          <span class="tag allow" data-i18n="flow.model.tag2">async on allow</span>
+          <span class="tag warn" data-i18n="flow.model.tag1">high risk -&gt; sync</span>
+          <span class="tag allow" data-i18n="flow.model.tag2">low risk -&gt; async if supported</span>
         </div>
       </div>
       <div class="card flow-step">
         <div class="flow-num">05</div>
-        <div class="mono">knowledge_writeback</div>
-        <h3 data-i18n="flow.writeback.title">Post-model knowledge layer</h3>
-        <p data-i18n="flow.writeback.desc">Candidate rules, textual memory, dedup, validation, and promotion only happen after the model stage completes.</p>
+        <div class="mono">proposal_sweep</div>
+        <h3 data-i18n="flow.writeback.title">End-of-task proposal sweep</h3>
+        <p data-i18n="flow.writeback.desc">The main agent processes pending async proposals after the current turn is finalized. Any resulting rule updates apply to subsequent turns only.</p>
         <div class="tags">
-          <span class="tag allow" data-i18n="flow.writeback.tag1">candidate rules</span>
-          <span class="tag allow" data-i18n="flow.writeback.tag2">textual memory</span>
+          <span class="tag allow" data-i18n="flow.writeback.tag1">main-agent maintenance</span>
+          <span class="tag allow" data-i18n="flow.writeback.tag2">next-turn effect</span>
         </div>
       </div>
     </div>
@@ -670,14 +671,14 @@
         <div><span class="trigger-badge warn">downgrade</span></div>
         <div>
           <h3 data-i18n="triggers.downgrade.title">Downgrade keeps the user on the critical path</h3>
-          <p data-i18n="triggers.downgrade.desc">`downgrade` defaults to synchronous model execution because the current turn usually still needs the model judgment.</p>
+          <p data-i18n="triggers.downgrade.desc">`downgrade` should normally be treated as high risk or at least current-turn critical, so model execution stays synchronous.</p>
         </div>
       </div>
       <div class="trigger-row">
         <div><span class="trigger-badge allow">allow</span></div>
         <div>
           <h3 data-i18n="triggers.allow.title">Allow can defer expensive reasoning</h3>
-          <p data-i18n="triggers.allow.desc">`allow` defaults to asynchronous model-stage execution if the framework supports it; otherwise it falls back to synchronous execution.</p>
+          <p data-i18n="triggers.allow.desc">`allow` still requires framework risk assessment. Only low-risk turns may use asynchronous model-stage execution; otherwise the framework must keep it synchronous.</p>
         </div>
       </div>
     </div>
@@ -726,7 +727,7 @@
       <div class="install-grid">
         <div class="card">
           <h3 data-i18n="install.claude.title">Claude Code</h3>
-          <p data-i18n="install.claude.desc">Best fit for the new version. Use hooks to enforce the rule-first frontend, then dispatch the model stage as sync or async.</p>
+        <p data-i18n="install.claude.desc">Best fit for the new version. Use hooks to enforce the rule-first frontend, then dispatch the model stage only after framework risk assessment.</p>
         </div>
         <div class="code-block">
           <div class="code-head">
@@ -743,7 +744,7 @@ python install/install.py</pre>
       <div class="install-grid">
         <div class="card">
           <h3 data-i18n="install.codex.title">Codex</h3>
-          <p data-i18n="install.codex.desc">Use `SKILL.md` plus `AGENTS.md` to keep the rule-first behavior stable. If subagent execution is unreliable, run `model_stage` synchronously.</p>
+        <p data-i18n="install.codex.desc">Use `SKILL.md` plus `AGENTS.md` to keep the rule-first behavior stable. Only low-risk turns may use subagents; otherwise run `model_stage` synchronously.</p>
         </div>
         <div class="code-block">
           <div class="code-head">
@@ -799,12 +800,12 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "panel.legend1.badge": "Always on",
         "panel.legend1.text": "`base_rule`, `extra_rule`, and `rule_gate` are synchronous on every turn.",
         "panel.legend2.badge": "Conditional",
-        "panel.legend2.text": "`model_stage` only runs after the rule gate allows the request to continue.",
+        "panel.legend2.text": "`model_stage` only runs after the rule gate allows the request to continue and the framework assigns a risk level.",
         "panel.legend3.badge": "Controlled writeback",
         "panel.legend3.text": "New rules and memory are written only after a completed model stage.",
         "flow.tag": "Execution Flow",
         "flow.title": "A pipeline built for strict ordering",
-        "flow.sub": "The new version is no longer a full-chain HIGH/LOW split. It is a rule-first frontend with a conditional model backend.",
+        "flow.sub": "The new version is no longer a full-chain HIGH/LOW split. It is a rule-first frontend plus risk-gated model dispatch.",
         "flow.base.title": "Base rule stage",
         "flow.base.desc": "Runs the stable rule and heuristic path: preflight, runtime, and output guard. This is the frozen baseline.",
         "flow.base.tag1": "synchronous",
@@ -815,23 +816,23 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "flow.extra.tag2": "no writeback here",
         "flow.gate.title": "Conservative merge",
         "flow.gate.desc": "Combines base and extra rule outputs with fixed precedence: block is strongest, then downgrade, then allow.",
-        "flow.model.title": "Conditional model backend",
-        "flow.model.desc": "Only entered if the rule stage does not block. `downgrade` defaults to sync; `allow` defaults to async when the framework can support it.",
-        "flow.model.tag1": "sync on downgrade",
-        "flow.model.tag2": "async on allow",
-        "flow.writeback.title": "Post-model knowledge layer",
-        "flow.writeback.desc": "Candidate rules, textual memory, dedup, validation, and promotion only happen after the model stage completes.",
-        "flow.writeback.tag1": "candidate rules",
-        "flow.writeback.tag2": "textual memory",
+        "flow.model.title": "Risk-gated model backend",
+        "flow.model.desc": "Only entered if the rule stage does not block. The skill or framework must first assign a risk level: high risk stays sync; only low-risk turns may use async when the framework supports it.",
+        "flow.model.tag1": "high risk -> sync",
+        "flow.model.tag2": "low risk -> async if supported",
+        "flow.writeback.title": "End-of-task proposal sweep",
+        "flow.writeback.desc": "The main agent processes pending async proposals after the current turn is finalized. Any resulting rule updates apply to subsequent turns only.",
+        "flow.writeback.tag1": "main-agent maintenance",
+        "flow.writeback.tag2": "next-turn effect",
         "triggers.tag": "Trigger Policy",
         "triggers.title": "Each stage has a hard trigger boundary",
         "triggers.sub": "The design goal is to prevent expensive or noisy logic from running before cheaper rule evidence is exhausted.",
         "triggers.block.title": "Rule stage blocks immediately",
         "triggers.block.desc": "If `rule_stage_action == block`, the turn ends there. No subagent, no model stage, no new memory, and no rule synthesis.",
         "triggers.downgrade.title": "Downgrade keeps the user on the critical path",
-        "triggers.downgrade.desc": "`downgrade` defaults to synchronous model execution because the current turn usually still needs the model judgment.",
+        "triggers.downgrade.desc": "`downgrade` should normally be treated as high risk or at least current-turn critical, so model execution stays synchronous.",
         "triggers.allow.title": "Allow can defer expensive reasoning",
-        "triggers.allow.desc": "`allow` defaults to asynchronous model-stage execution if the framework supports it; otherwise it falls back to synchronous execution.",
+        "triggers.allow.desc": "`allow` still requires framework risk assessment. Only low-risk turns may use asynchronous model-stage execution; otherwise the framework must keep it synchronous.",
         "features.tag": "Why This Version",
         "features.title": "The new version is stricter about what is allowed to happen when",
         "features.sub": "The architecture is designed for agent security research, framework portability, and auditable runtime behavior.",
@@ -851,9 +852,9 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "install.tab3": "OpenClaw",
         "install.command": "Install command",
         "install.claude.title": "Claude Code",
-        "install.claude.desc": "Best fit for the new version. Use hooks to enforce the rule-first frontend, then dispatch the model stage as sync or async.",
+        "install.claude.desc": "Best fit for the new version. Use hooks to enforce the rule-first frontend, then dispatch the model stage only after framework risk assessment.",
         "install.codex.title": "Codex",
-        "install.codex.desc": "Use `SKILL.md` plus `AGENTS.md` to keep the rule-first behavior stable. If subagent execution is unreliable, run `model_stage` synchronously.",
+        "install.codex.desc": "Use `SKILL.md` plus `AGENTS.md` to keep the rule-first behavior stable. Only low-risk turns may use subagents; otherwise run `model_stage` synchronously.",
         "install.openclaw.title": "OpenClaw",
         "install.openclaw.desc": "Use marketplace installation plus workspace `AGENTS.md`. Async model-stage behavior is optional, not required.",
         "footer": "SentrySkills keeps the current turn decision explicit, the adaptive layer local, and the expensive reasoning conditional."
@@ -862,7 +863,7 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "nav.flow": "流程",
         "nav.triggers": "触发",
         "nav.install": "安装",
-        "hero.badge": "规则优先前端 + 条件模型后端",
+        "hero.badge": "规则优先前端 + 风险门控模型后端",
         "hero.title1": "面向 AI Agent 的",
         "hero.title2": "自我防护框架",
         "hero.sub": "SentrySkills 让决策路径保持便宜、可解释、可审计：规则永远先执行，模型推理和自适应记忆只在确实需要时才出现。",
@@ -875,12 +876,12 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "panel.legend1.badge": "始终执行",
         "panel.legend1.text": "`base_rule`、`extra_rule` 和 `rule_gate` 在每一轮都同步执行。",
         "panel.legend2.badge": "条件触发",
-        "panel.legend2.text": "`model_stage` 只有在规则门控允许继续时才会运行。",
+        "panel.legend2.text": "`model_stage` 只有在规则门控允许继续且框架完成风险分级后才会运行。",
         "panel.legend3.badge": "受控写回",
         "panel.legend3.text": "新规则和记忆只会在已完成的模型阶段之后写入。",
         "flow.tag": "执行流程",
         "flow.title": "严格按顺序构建的流水线",
-        "flow.sub": "新版本不再是整条链路的 HIGH/LOW 分流，而是规则优先前端加条件模型后端。",
+        "flow.sub": "新版本不再是整条链路的 HIGH/LOW 分流，而是规则优先前端加风险门控的模型调度。",
         "flow.base.title": "基础规则阶段",
         "flow.base.desc": "执行稳定的规则和启发式主干：preflight、runtime、output guard。这是冻结的基础层。",
         "flow.base.tag1": "同步执行",
@@ -891,10 +892,10 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "flow.extra.tag2": "此处不写回",
         "flow.gate.title": "保守合并",
         "flow.gate.desc": "用固定优先级合并基础规则与扩展规则：block 最强，其次 downgrade，最后 allow。",
-        "flow.model.title": "条件模型后端",
-        "flow.model.desc": "只有规则阶段未阻断时才进入。`downgrade` 默认同步，`allow` 默认在框架支持时走异步。",
-        "flow.model.tag1": "downgrade 同步",
-        "flow.model.tag2": "allow 异步",
+        "flow.model.title": "风险门控模型后端",
+        "flow.model.desc": "只有规则阶段未阻断时才进入。skill 或框架必须先给出风险等级：高危保持同步；只有低风险且框架支持时才允许异步。",
+        "flow.model.tag1": "高风险 -> 同步",
+        "flow.model.tag2": "低风险 -> 支持时异步",
         "flow.writeback.title": "模型后知识层",
         "flow.writeback.desc": "候选规则、自然语言记忆、去重、验证和提升，只会在模型阶段完成后发生。",
         "flow.writeback.tag1": "候选规则",
@@ -905,9 +906,9 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "triggers.block.title": "规则阶段命中 block 立即结束",
         "triggers.block.desc": "如果 `rule_stage_action == block`，这一轮就在这里结束。不允许 subagent，不进入模型阶段，也不生成新记忆和新规则。",
         "triggers.downgrade.title": "Downgrade 仍在当前轮关键路径上",
-        "triggers.downgrade.desc": "`downgrade` 默认走同步模型阶段，因为当前轮通常仍然需要模型判断才能决定怎么回复。",
+        "triggers.downgrade.desc": "`downgrade` 通常应被视为高风险或至少是当前轮关键路径，因此模型阶段保持同步。",
         "triggers.allow.title": "Allow 可以延后昂贵推理",
-        "triggers.allow.desc": "`allow` 默认在框架支持时走异步模型阶段；如果框架不稳定或不支持，就回退为同步执行。",
+        "triggers.allow.desc": "`allow` 仍然需要框架做风险分级。只有低风险轮次才允许异步模型阶段，否则必须同步执行。",
         "features.tag": "版本重点",
         "features.title": "这个版本严格限定了什么事情可以在什么时候发生",
         "features.sub": "这套结构是为 Agent 安全研究、跨框架接入和运行期审计而设计的。",
@@ -927,9 +928,9 @@ curl -o ~/.openclaw/workspace/AGENTS.md \
         "install.tab3": "OpenClaw",
         "install.command": "安装命令",
         "install.claude.title": "Claude Code",
-        "install.claude.desc": "最适合新版本。可以用 hook 强制规则优先前端，再按框架能力把模型阶段调度为同步或异步。",
+        "install.claude.desc": "最适合新版本。可以用 hook 强制规则优先前端，再在框架风险分级之后调度模型阶段。",
         "install.codex.title": "Codex",
-        "install.codex.desc": "通过 `SKILL.md` 和 `AGENTS.md` 约束规则优先行为。如果 subagent 不稳定，就把 `model_stage` 当作同步执行。",
+        "install.codex.desc": "通过 `SKILL.md` 和 `AGENTS.md` 约束规则优先行为。只有低风险轮次允许使用 subagent，否则把 `model_stage` 当作同步执行。",
         "install.openclaw.title": "OpenClaw",
         "install.openclaw.desc": "使用 marketplace 安装配合 workspace `AGENTS.md`。异步模型阶段是增强能力，不是基础依赖。",
         "footer": "SentrySkills 让当前轮决策保持明确，让自适应层保持本地化，并让昂贵推理保持条件触发。"

@@ -208,6 +208,15 @@ def sanitize_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     if "model_dispatch_mode" in payload:
         sanitized["model_dispatch_mode"] = str(payload["model_dispatch_mode"])[:100]
 
+    if "framework_risk_level" in payload:
+        sanitized["framework_risk_level"] = str(payload["framework_risk_level"])[:100]
+
+    if "sentryskills_role" in payload:
+        sanitized["sentryskills_role"] = str(payload["sentryskills_role"])[:100]
+
+    if "process_pending_proposals" in payload:
+        sanitized["process_pending_proposals"] = bool(payload["process_pending_proposals"])
+
     if "pending_model_task" in payload and isinstance(payload["pending_model_task"], dict):
         clean_pending: Dict[str, Any] = {}
         for key, value in payload["pending_model_task"].items():

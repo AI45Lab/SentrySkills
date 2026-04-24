@@ -61,7 +61,9 @@ try:
         load_extra_state,
         merge_action as merge_extra_action,
         parse_model_stage,
+        process_pending_proposals,
         synthesize_knowledge_from_model_stage,
+        write_async_proposal,
         writeback_model_knowledge,
     )
     EXTRA_GUARD_AVAILABLE = True
@@ -2030,6 +2032,9 @@ def build_unified_log(
 
     decision_trace = _build_decision_trace(preflight, runtime, output, final_action)
     decision_explanation = _build_explanation(preflight, runtime, output)
+    model_executor = _derive_model_executor(extra_layer or {})
+    model_stage_result_available = _derive_model_stage_result_available(extra_layer or {})
+    proposal_sweep_effect = _derive_proposal_sweep_effect((extra_layer or {}).get("proposal_sweep", {}))
 
     # Assemble unified log
     unified_log = {
@@ -2113,6 +2118,9 @@ def build_unified_log(
             "recommended_action": _get_recommended_action(final_action),
             "explanation": decision_explanation,
             "decision_trace": decision_trace,
+            "model_executor": model_executor,
+            "model_stage_result_available": model_stage_result_available,
+            "proposal_sweep_effect": proposal_sweep_effect,
         },
 
         # ===== Audit Info =====
@@ -2137,13 +2145,19 @@ def build_unified_log(
                 "entered": extra_layer.get("model_stage_entered", False),
                 "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                 "status": extra_layer.get("model_stage_status", "skipped"),
+                "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                 "action": extra_layer.get("model_stage_action", "skipped"),
+                "executor": model_executor,
+                "result_available": model_stage_result_available,
                 "reason_codes": extra_layer.get("model_stage_reason_codes", []),
                 "analysis": extra_layer.get("model_stage_analysis", ""),
                 "findings": extra_layer.get("model_stage_findings", []),
                 "pending_model_task": extra_layer.get("pending_model_task", {}),
             },
             "knowledge_layer": {
+                "proposal_sweep": extra_layer.get("proposal_sweep", {}),
+                "proposal_sweep_effect": proposal_sweep_effect,
+                "proposal_write": extra_layer.get("proposal_write", {}),
                 "status": extra_layer.get("knowledge_writeback_status", "skipped"),
                 "dedup_summary": extra_layer.get("dedup_summary", {}),
                 "validation_summary": extra_layer.get("validation_summary", {}),
@@ -2154,6 +2168,7 @@ def build_unified_log(
         }
         unified_log["final"]["base_rule_action"] = extra_layer.get("base_rule_action", final_action)
         unified_log["final"]["rule_stage_action"] = extra_layer.get("rule_stage_action", final_action)
+        unified_log["final"]["framework_risk_level"] = extra_layer.get("framework_risk_level", "unknown")
         unified_log["final"]["model_dispatch_mode"] = extra_layer.get("model_dispatch_mode", "skipped")
         unified_log["final"]["model_stage_status"] = extra_layer.get("model_stage_status", "skipped")
         unified_log["final"]["model_stage_action"] = extra_layer.get("model_stage_action", "skipped")
@@ -2171,6 +2186,31 @@ def _get_recommended_action(final_action: str) -> str:
         "block": "Response must be refused or redacted",
     }
     return recommendations.get(final_action, "Unknown action")
+
+
+def _derive_model_executor(extra_layer: Dict[str, Any]) -> str:
+    if str(extra_layer.get("model_stage_status", "skipped")) != "completed":
+        return "none"
+    role = str(extra_layer.get("sentryskills_role", "main_agent")).strip().lower()
+    if role == "subagent":
+        return "subagent"
+    return "main_agent"
+
+
+def _derive_model_stage_result_available(extra_layer: Dict[str, Any]) -> bool:
+    return str(extra_layer.get("model_stage_status", "skipped")) == "completed"
+
+
+def _derive_proposal_sweep_effect(proposal_sweep: Dict[str, Any]) -> str:
+    if not isinstance(proposal_sweep, dict) or not proposal_sweep.get("sweep_executed", False):
+        return "no_change"
+    generated = int(proposal_sweep.get("candidate_rules_generated", 0) or 0)
+    promoted = int(proposal_sweep.get("candidate_rules_promoted", 0) or 0)
+    if promoted > 0:
+        return "active_rule_updated"
+    if generated > 0:
+        return "candidate_only"
+    return "no_change"
 
 
 def _describe_reason_code(code: str) -> str:
@@ -3261,15 +3301,19 @@ def main() -> None:
             "candidate_rules": [],
             "textual_memory": [],
         }
+        sentryskills_role = str(payload.get("sentryskills_role", "main_agent")).strip().lower()
+        process_pending = bool(payload.get("process_pending_proposals", True))
         extra_layer = {
             "base_rule_action": base_rule_action,
             "base_rule_reason_codes": base_rule_reason_codes,
             "base_rule_matched_rules": base_rule_matched_rules,
+            "sentryskills_role": sentryskills_role,
             "extra_rule_action": "allow",
             "extra_rule_reason_codes": [],
             "extra_rule_matched_rules": [],
             "extra_rule_observations": [],
             "rule_stage_action": base_rule_action,
+            "framework_risk_level": "unknown",
             "model_stage_entered": False,
             "model_dispatch_mode": "skipped",
             "model_stage_status": "skipped",
@@ -3283,6 +3327,16 @@ def main() -> None:
             "knowledge_writeback_status": "skipped",
             "knowledge_writeback": {"writeback_executed": False, "skipped_reason": "rule_stage_resolved"},
             "knowledge_item_ids": [],
+            "model_executor": "none",
+            "model_stage_result_available": False,
+            "proposal_sweep_effect": "no_change",
+            "proposal_sweep": {
+                "sweep_executed": False,
+                "sweep_timing": "end_of_task",
+                "effective_scope": "subsequent_turns_only",
+                "skipped_reason": "not_run_yet",
+            },
+            "proposal_write": {},
             "storage_paths": {k: str(v) for k, v in extra_state.get("paths", {}).items()},
         }
         if EXTRA_GUARD_AVAILABLE:
@@ -3307,9 +3361,18 @@ def main() -> None:
             "model_stage_present": False,
         }
         predictive_report_raw = {"overall_risk_level": "none", "predicted_risks": [], "top_concerns": [], "recommended_actions": [], "confidence_summary": 0.0}
+        framework_risk_level = str(payload.get("framework_risk_level", "unknown")).strip().lower()
+        if framework_risk_level not in {"high", "low"}:
+            framework_risk_level = "unknown"
+        extra_layer["framework_risk_level"] = framework_risk_level
+
         model_dispatch_mode = str(payload.get("model_dispatch_mode", "")).strip().lower()
-        if model_dispatch_mode not in {"sync", "async"}:
-            model_dispatch_mode = "async" if rule_stage_action == "allow" else "sync" if rule_stage_action == "downgrade" else "skipped"
+        if rule_stage_action == "block":
+            model_dispatch_mode = "skipped"
+        elif model_dispatch_mode not in {"sync", "async"}:
+            model_dispatch_mode = "sync"
+        elif model_dispatch_mode == "async" and framework_risk_level != "low":
+            model_dispatch_mode = "sync"
 
         if rule_stage_action != "block":
             extra_layer["model_stage_entered"] = True
@@ -3363,24 +3426,43 @@ def main() -> None:
                     if EXTRA_GUARD_AVAILABLE:
                         try:
                             model_knowledge = synthesize_knowledge_from_model_stage(model_stage, turn_id)
-                            writeback_result = writeback_model_knowledge(
-                                project_root=project_root,
-                                trace_id=trace_id,
-                                turn_id=turn_id,
-                                active_rules=list(extra_state.get("active_rules", [])),
-                                candidate_rules=list(extra_state.get("candidate_rules", [])),
-                                textual_memory=list(extra_state.get("textual_memory", [])),
-                                model_knowledge=model_knowledge,
-                            )
-                            extra_layer.update(writeback_result)
-                            extra_layer["knowledge_writeback_status"] = "completed"
-                            if not model_knowledge.get("rule_candidates") and not model_knowledge.get("memory_candidates"):
+                            if model_dispatch_mode == "async":
+                                proposal_result = write_async_proposal(
+                                    project_root=project_root,
+                                    trace_id=trace_id,
+                                    turn_id=turn_id,
+                                    task_id=str(extra_layer.get("pending_model_task", {}).get("task_id", f"model-task:{turn_id}")),
+                                    framework_risk_level=framework_risk_level,
+                                    model_dispatch_mode=model_dispatch_mode,
+                                    model_stage=model_stage,
+                                    model_knowledge=model_knowledge,
+                                )
+                                extra_layer["proposal_write"] = proposal_result
                                 extra_layer["knowledge_writeback_status"] = "skipped"
                                 extra_layer["knowledge_writeback"] = {
                                     "writeback_executed": False,
-                                    "skipped_reason": "model_stage_no_new_knowledge",
-                                    "knowledge_source": "model_stage",
+                                    "skipped_reason": "async_proposal_written",
+                                    "knowledge_source": "async_model_stage",
                                 }
+                            else:
+                                writeback_result = writeback_model_knowledge(
+                                    project_root=project_root,
+                                    trace_id=trace_id,
+                                    turn_id=turn_id,
+                                    active_rules=list(extra_state.get("active_rules", [])),
+                                    candidate_rules=list(extra_state.get("candidate_rules", [])),
+                                    textual_memory=list(extra_state.get("textual_memory", [])),
+                                    model_knowledge=model_knowledge,
+                                )
+                                extra_layer.update(writeback_result)
+                                extra_layer["knowledge_writeback_status"] = "completed"
+                                if not model_knowledge.get("rule_candidates") and not model_knowledge.get("memory_candidates"):
+                                    extra_layer["knowledge_writeback_status"] = "skipped"
+                                    extra_layer["knowledge_writeback"] = {
+                                        "writeback_executed": False,
+                                        "skipped_reason": "model_stage_no_new_knowledge",
+                                        "knowledge_source": "model_stage",
+                                    }
                         except Exception as writeback_exc:
                             logger.warning(f"Extra knowledge writeback failed and will be skipped: {writeback_exc}")
                             extra_layer["knowledge_writeback_status"] = "failed"
@@ -3393,6 +3475,37 @@ def main() -> None:
         final_action = rule_stage_action
         if extra_layer.get("model_stage_status") == "completed":
             final_action = merge_extra_action(rule_stage_action, extra_layer.get("model_stage_action", "allow"))
+
+        if EXTRA_GUARD_AVAILABLE and sentryskills_role != "subagent" and process_pending:
+            try:
+                extra_layer["proposal_sweep"] = process_pending_proposals(project_root, trace_id)
+            except Exception as proposal_exc:
+                logger.warning(f"Proposal sweep failed and will be skipped: {proposal_exc}")
+                extra_layer["proposal_sweep"] = {
+                    "sweep_executed": False,
+                    "sweep_timing": "end_of_task",
+                    "effective_scope": "subsequent_turns_only",
+                    "skipped_reason": "proposal_sweep_error",
+                    "error": str(proposal_exc),
+                }
+        elif sentryskills_role == "subagent":
+            extra_layer["proposal_sweep"] = {
+                "sweep_executed": False,
+                "sweep_timing": "end_of_task",
+                "effective_scope": "subsequent_turns_only",
+                "skipped_reason": "subagent_turn",
+            }
+        elif not process_pending:
+            extra_layer["proposal_sweep"] = {
+                "sweep_executed": False,
+                "sweep_timing": "end_of_task",
+                "effective_scope": "subsequent_turns_only",
+                "skipped_reason": "disabled_by_payload",
+            }
+
+        extra_layer["model_executor"] = _derive_model_executor(extra_layer)
+        extra_layer["model_stage_result_available"] = _derive_model_stage_result_available(extra_layer)
+        extra_layer["proposal_sweep_effect"] = _derive_proposal_sweep_effect(extra_layer.get("proposal_sweep", {}))
 
         residual_risks: List[str] = []
         if output["leakage_detected"]:
@@ -3535,8 +3648,11 @@ def main() -> None:
                 [],
                 {
                     "rule_stage_action": rule_stage_action,
+                    "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                     "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                     "status": extra_layer.get("model_stage_status", "skipped"),
+                    "model_executor": extra_layer.get("model_executor", "none"),
+                    "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
                     "analysis": extra_layer.get("model_stage_analysis", ""),
                     "findings": extra_layer.get("model_stage_findings", []),
                     "model_stage_present": model_stage.get("model_stage_present", False),
@@ -3556,14 +3672,41 @@ def main() -> None:
                 [],
                 {
                     "rule_stage_action": rule_stage_action,
+                    "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                     "model_stage_entered": extra_layer.get("model_stage_entered", False),
                     "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                     "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                    "model_executor": extra_layer.get("model_executor", "none"),
+                    "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
                     "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
+                    "proposal_sweep": extra_layer.get("proposal_sweep", {}),
+                    "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
+                    "proposal_write": extra_layer.get("proposal_write", {}),
                     "dedup_summary": extra_layer.get("dedup_summary", {}),
                     "validation_summary": extra_layer.get("validation_summary", {}),
                     "knowledge_writeback": extra_layer.get("knowledge_writeback", {}),
                     "knowledge_item_ids": extra_layer.get("knowledge_item_ids", []),
+                },
+            )
+        proposal_sweep = extra_layer.get("proposal_sweep", {})
+        if proposal_sweep:
+            emit_event(
+                events_sink,
+                trace_id,
+                session_id,
+                turn_id,
+                str(args.policy_profile),
+                "proposal_sweep_result",
+                "swept" if proposal_sweep.get("sweep_executed", False) else "skipped",
+                [],
+                [],
+                {
+                    "rule_stage_action": rule_stage_action,
+                    "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
+                    "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
+                    "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
+                    "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
+                    "proposal_sweep": proposal_sweep,
                 },
             )
 
@@ -3593,9 +3736,13 @@ def main() -> None:
                     "base_rule_action": base_rule_action,
                     "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
                     "rule_stage_action": rule_stage_action,
+                    "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                     "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                     "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
                     "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+                    "model_executor": extra_layer.get("model_executor", "none"),
+                    "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
+                    "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
                     "final_action": final_action,
                 },
                 "decision_explanation": decision_explanation,
@@ -3616,12 +3763,18 @@ def main() -> None:
                         "entered": extra_layer.get("model_stage_entered", False),
                         "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                         "status": extra_layer.get("model_stage_status", "skipped"),
+                        "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                         "action": extra_layer.get("model_stage_action", "skipped"),
+                        "executor": extra_layer.get("model_executor", "none"),
+                        "result_available": extra_layer.get("model_stage_result_available", False),
                         "reason_codes": extra_layer.get("model_stage_reason_codes", []),
                         "analysis": extra_layer.get("model_stage_analysis", ""),
                         "findings": extra_layer.get("model_stage_findings", []),
                         "pending_model_task": extra_layer.get("pending_model_task", {}),
                     },
+                    "proposal_sweep": extra_layer.get("proposal_sweep", {}),
+                    "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
+                    "proposal_write": extra_layer.get("proposal_write", {}),
                     "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
                     "dedup_summary": extra_layer.get("dedup_summary", {}),
                     "validation_summary": extra_layer.get("validation_summary", {}),
@@ -3675,10 +3828,14 @@ def main() -> None:
             "base_rule_action": base_rule_action,
             "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
             "rule_stage_action": rule_stage_action,
+            "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
             "model_stage_entered": extra_layer.get("model_stage_entered", False),
             "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
             "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
             "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+            "model_executor": extra_layer.get("model_executor", "none"),
+            "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
+            "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
             "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
             "final_action": final_action,
             "decision_reason_codes": decision_reason_codes,
@@ -3691,9 +3848,13 @@ def main() -> None:
                 "base_rule_action": base_rule_action,
                 "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
                 "rule_stage_action": rule_stage_action,
+                "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                 "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                 "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
                 "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+                "model_executor": extra_layer.get("model_executor", "none"),
+                "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
+                "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
                 "final_action": final_action,
             },
             "decision_explanation": decision_explanation,
@@ -3714,12 +3875,18 @@ def main() -> None:
                     "entered": extra_layer.get("model_stage_entered", False),
                     "dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                     "status": extra_layer.get("model_stage_status", "skipped"),
+                    "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                     "action": extra_layer.get("model_stage_action", "skipped"),
+                    "executor": extra_layer.get("model_executor", "none"),
+                    "result_available": extra_layer.get("model_stage_result_available", False),
                     "reason_codes": extra_layer.get("model_stage_reason_codes", []),
                     "analysis": extra_layer.get("model_stage_analysis", ""),
                     "findings": extra_layer.get("model_stage_findings", []),
                     "pending_model_task": extra_layer.get("pending_model_task", {}),
                 },
+                "proposal_sweep": extra_layer.get("proposal_sweep", {}),
+                "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
+                "proposal_write": extra_layer.get("proposal_write", {}),
                 "knowledge_writeback_status": extra_layer.get("knowledge_writeback_status", "skipped"),
                 "dedup_summary": extra_layer.get("dedup_summary", {}),
                 "validation_summary": extra_layer.get("validation_summary", {}),
@@ -3779,9 +3946,13 @@ def main() -> None:
                 "base_rule_action": base_rule_action,
                 "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
                 "rule_stage_action": rule_stage_action,
+                "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                 "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                 "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
                 "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+                "model_executor": extra_layer.get("model_executor", "none"),
+                "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
+                "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
                 "final_action": final_action,
                 "duration_ms": duration_ms,
                 "decision_chain": summary["decision_chain"],
@@ -3810,9 +3981,13 @@ def main() -> None:
                     "base_rule_action": base_rule_action,
                     "extra_rule_action": extra_layer.get("extra_rule_action", "allow"),
                     "rule_stage_action": rule_stage_action,
+                    "framework_risk_level": extra_layer.get("framework_risk_level", "unknown"),
                     "model_dispatch_mode": extra_layer.get("model_dispatch_mode", "skipped"),
                     "model_stage_status": extra_layer.get("model_stage_status", "skipped"),
                     "model_stage_action": extra_layer.get("model_stage_action", "skipped"),
+                    "model_executor": extra_layer.get("model_executor", "none"),
+                    "model_stage_result_available": extra_layer.get("model_stage_result_available", False),
+                    "proposal_sweep_effect": extra_layer.get("proposal_sweep_effect", "no_change"),
                     "final_action": final_action,
                     "reason_codes": decision_reason_codes,
                     "matched_rules": matched_rules,

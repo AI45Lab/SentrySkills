@@ -6,19 +6,22 @@ SentrySkills does not become automatic just because it is installed. You must al
 
 All integrations should follow:
 
-`base_rule -> extra_rule -> rule_gate -> model_stage(sync or async) -> knowledge_writeback`
+`base_rule -> extra_rule -> rule_gate -> risk assessment -> model_stage(sync or async) -> end-of-task proposal sweep`
 
 Key rules:
 
 - `block` at rule stage ends the turn immediately
-- subagents are only for `model_stage`, never for the rule frontend
+- subagents are only for low-risk `model_stage`, never for the rule frontend
 - new rules and textual memory are only written after a completed `model_stage`
+- the main framework agent should run one proposal sweep at task end
+- proposal sweep only affects subsequent turns
 
 ## Documentation
 
 - [claude_code_install.md](claude_code_install.md)
 - [codex_install.md](codex_install.md)
 - [openclaw_install.md](openclaw_install.md)
+- [experiment_protocol.md](experiment_protocol.md)
 
 ## Workspace-local state
 

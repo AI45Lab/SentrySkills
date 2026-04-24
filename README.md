@@ -6,7 +6,7 @@
 
 SentrySkills is a self-guarding security framework for AI agents. The current version uses a **rule-first frontend** and a **conditional model backend**:
 
-`base_rule -> extra_rule -> rule_gate -> model_stage(sync or async) -> knowledge_writeback`
+`base_rule -> extra_rule -> rule_gate -> risk assessment -> model_stage(sync or async) -> end-of-task proposal sweep`
 
 ## What changed in the new version
 
@@ -15,6 +15,7 @@ SentrySkills is a self-guarding security framework for AI agents. The current ve
 - `rule_gate` uses `block > downgrade > allow`.
 - `model_stage` is only entered when the rule stage does not block.
 - Knowledge writeback is only allowed after a completed `model_stage`.
+- The main framework agent performs one proposal sweep at task end.
 - Runtime state is workspace-local under `.sentryskills/base` and `.sentryskills/extra`.
 
 ## Core modules
@@ -44,15 +45,18 @@ The system always runs:
 
 If `rule_stage_action == block`, the turn ends immediately. No model stage and no knowledge writeback are allowed.
 
-### Conditional model backend
+### Risk-gated model backend
 
-If `rule_stage_action != block`, the framework may enter `model_stage`.
+If `rule_stage_action != block`, the main framework agent may enter `model_stage`.
 
-Default dispatch policy:
+Dispatch policy:
 
-- `downgrade -> sync`
-- `allow -> async`
-- frameworks without stable subagent support fall back to `sync`
+- assign `framework_risk_level = high | low`
+- `high -> sync`
+- `low + subagent support -> async`
+- `low + no stable subagent support -> sync`
+
+Subagent capability may exist at all times, but actual dispatch is still decided by the main framework agent after risk assessment.
 
 ### Knowledge writeback
 
@@ -66,6 +70,8 @@ Only a completed `model_stage` may generate:
 
 Pure rule hits do not create new knowledge.
 
+If `model_stage` is completed by an async subagent, the result is first written as a proposal file. The main framework agent later sweeps proposal files at task end and performs the actual rule update pipeline. Proposal sweep only affects subsequent turns and never rewrites the already finalized current turn.
+
 ## Runtime outputs
 
 The runtime script now exposes these stage fields in summaries and logs:
@@ -73,9 +79,13 @@ The runtime script now exposes these stage fields in summaries and logs:
 - `base_rule_action`
 - `extra_rule_action`
 - `rule_stage_action`
+- `framework_risk_level`
 - `model_dispatch_mode`
 - `model_stage_status`
 - `model_stage_action`
+- `model_executor`
+- `model_stage_result_available`
+- `proposal_sweep_effect`
 - `knowledge_writeback_status`
 - `final_action`
 
@@ -98,15 +108,16 @@ The runtime script now exposes these stage fields in summaries and logs:
 ## Framework integration
 
 - Claude Code
-  Prefer hook-enforced rule-first execution; model stage may be sync or async if the framework supports it.
+  Prefer hook-enforced rule-first execution; model stage should be dispatched after framework risk assessment.
 - Codex / OpenClaw
-  Use `SKILL.md` + `AGENTS.md` discipline. If async/subagent execution is not reliable, treat `model_stage` as synchronous.
+  Use `SKILL.md` + `AGENTS.md` discipline. Only low-risk turns may use async/subagent model-stage execution; otherwise treat `model_stage` as synchronous.
 
 See:
 
 - [install/claude_code_install.md](install/claude_code_install.md)
 - [install/codex_install.md](install/codex_install.md)
 - [install/openclaw_install.md](install/openclaw_install.md)
+- [install/experiment_protocol.md](install/experiment_protocol.md)
 
 ## Requirements
 

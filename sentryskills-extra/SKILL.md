@@ -11,6 +11,7 @@ description: Extension layer for SentrySkills. It separates online extra-rule de
 
 - `extra_rule`: online rule extension after `base_rule`
 - `extra_memory`: post-model-stage knowledge management
+  and end-of-task proposal sweeping by the main agent
 
 This skill must not use any framework-external model.
 
@@ -47,6 +48,13 @@ It may:
 - validate new candidate rules
 - promote validated rules into `active_extra_rules.json`
 
+For async subagent results:
+
+- the subagent may only write proposal files
+- proposal files are swept and consumed by the main agent
+- async analysis does not directly modify active or candidate stores
+- proposal sweep only affects subsequent turns
+
 It must not run when:
 
 - `rule_stage_action == block`
@@ -62,6 +70,10 @@ Workspace-local runtime state is stored under:
 - `.sentryskills/extra/memory/textual_memory.jsonl`
 - `.sentryskills/extra/memory/validation_audit.jsonl`
 - `.sentryskills/extra/memory/dedup_audit.jsonl`
+- `.sentryskills/extra/memory/proposal_audit.jsonl`
+- `.sentryskills/extra/proposals/pending/`
+- `.sentryskills/extra/proposals/processed/`
+- `.sentryskills/extra/proposals/rejected/`
 
 ## Model Constraint
 

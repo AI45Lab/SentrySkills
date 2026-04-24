@@ -14,14 +14,17 @@ Restart OpenClaw after installation.
 
 OpenClaw relies on skill loading plus `AGENTS.md` behavior constraints. The intended execution order is:
 
-`base_rule -> extra_rule -> rule_gate -> model_stage -> knowledge_writeback`
+`base_rule -> extra_rule -> rule_gate -> risk assessment -> model_stage -> end-of-task proposal sweep`
 
 Recommended policy:
 
 - rule frontend is always synchronous
 - if `rule_stage_action == block`, stop immediately
-- async/subagent execution is only for `model_stage`
-- if async execution is unstable in your setup, use synchronous `model_stage`
+- assign `framework_risk_level` after rule gating
+- async/subagent execution is only for low-risk `model_stage`
+- if risk is high or async execution is unstable in your setup, use synchronous `model_stage`
+- run one proposal sweep at the end of each main-agent task
+- proposal sweep only affects subsequent turns
 
 ## Runtime state
 

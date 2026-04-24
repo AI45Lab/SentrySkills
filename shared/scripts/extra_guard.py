@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import suppress
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,14 +88,20 @@ def _default_rule_store() -> Dict[str, Any]:
 def _extra_paths(project_root: Path) -> Dict[str, Path]:
     root = project_root / ".sentryskills" / "extra"
     memory_dir = root / "memory"
+    proposals_dir = root / "proposals"
     return {
         "root": root,
         "memory_dir": memory_dir,
+        "proposals_dir": proposals_dir,
+        "proposals_pending": proposals_dir / "pending",
+        "proposals_processed": proposals_dir / "processed",
+        "proposals_rejected": proposals_dir / "rejected",
         "active_rules": memory_dir / "active_extra_rules.json",
         "candidate_rules": memory_dir / "candidate_extra_rules.jsonl",
         "textual_memory": memory_dir / "textual_memory.jsonl",
         "validation_audit": memory_dir / "validation_audit.jsonl",
         "dedup_audit": memory_dir / "dedup_audit.jsonl",
+        "proposal_audit": memory_dir / "proposal_audit.jsonl",
         "tmp_validation_dir": root / "tmp" / "validation",
     }
 
@@ -103,9 +110,12 @@ def ensure_extra_storage(project_root: Path) -> Dict[str, Path]:
     paths = _extra_paths(project_root)
     paths["memory_dir"].mkdir(parents=True, exist_ok=True)
     paths["tmp_validation_dir"].mkdir(parents=True, exist_ok=True)
+    paths["proposals_pending"].mkdir(parents=True, exist_ok=True)
+    paths["proposals_processed"].mkdir(parents=True, exist_ok=True)
+    paths["proposals_rejected"].mkdir(parents=True, exist_ok=True)
     if not paths["active_rules"].exists():
         _write_json(paths["active_rules"], _default_rule_store())
-    for key in ["candidate_rules", "textual_memory", "validation_audit", "dedup_audit"]:
+    for key in ["candidate_rules", "textual_memory", "validation_audit", "dedup_audit", "proposal_audit"]:
         if not paths[key].exists():
             paths[key].write_text("", encoding="utf-8")
     return paths
@@ -244,6 +254,8 @@ def _coerce_rule_candidate(candidate: Dict[str, Any], turn_id: str, index: int) 
     reason_code = str(candidate.get("reason_code", f"EXTRA_MODEL_RULE_{index}")).strip() or f"EXTRA_MODEL_RULE_{index}"
     return {
         "rule_id": str(candidate.get("rule_id", f"extra:model:{turn_id}:{index}")),
+        "proposal_type": str(candidate.get("proposal_type", "new_rule") or "new_rule"),
+        "target_rule_id": str(candidate.get("target_rule_id", "")),
         "status": "candidate",
         "phase_scope": str(candidate.get("phase_scope", "model_stage")),
         "pattern_type": pattern_type,
@@ -307,6 +319,62 @@ def synthesize_knowledge_from_model_stage(
         "rule_candidates": rule_candidates,
         "memory_candidates": memory_candidates,
     }
+
+
+def _timestamp_slug() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _safe_filename(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return cleaned[:80] or "proposal"
+
+
+def write_async_proposal(
+    project_root: Path,
+    trace_id: str,
+    turn_id: str,
+    task_id: str,
+    framework_risk_level: str,
+    model_dispatch_mode: str,
+    model_stage: Dict[str, Any],
+    model_knowledge: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    paths = ensure_extra_storage(project_root)
+    proposal_id = f"proposal:{_timestamp_slug()}:{_safe_filename(turn_id)}:{_safe_filename(task_id)}"
+    payload = {
+        "proposal_id": proposal_id,
+        "created_at": now_iso(),
+        "source_turn_id": turn_id,
+        "source_task_id": task_id,
+        "trace_id": trace_id,
+        "framework_risk_level": framework_risk_level,
+        "model_dispatch_mode": model_dispatch_mode,
+        "analysis": str(model_stage.get("model_stage_analysis", "")),
+        "findings": list(model_stage.get("model_stage_findings", [])),
+        "model_stage_action": str(model_stage.get("model_stage_action", "allow")),
+        "rule_proposals": list(model_knowledge.get("rule_candidates", [])),
+        "memory_notes": list(model_knowledge.get("memory_candidates", [])),
+        "status": "pending",
+    }
+    filename = f"{_timestamp_slug()}_{_safe_filename(turn_id)}_{_safe_filename(task_id)}.json"
+    tmp_path = paths["proposals_pending"] / f".{filename}.tmp"
+    final_path = paths["proposals_pending"] / filename
+    _write_json(tmp_path, payload)
+    tmp_path.replace(final_path)
+    return {
+        "proposal_written": True,
+        "proposal_file": str(final_path),
+        "proposal_id": proposal_id,
+        "proposal_rule_count": len(payload["rule_proposals"]),
+        "proposal_memory_count": len(payload["memory_notes"]),
+        "proposal_effective_scope": "subsequent_turns_only",
+    }
+
+
+def _load_proposal_file(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8-sig") as handle:
+        return json.load(handle)
 
 
 def _select_canonical(
@@ -558,6 +626,18 @@ def _validate_candidates(
     return accepted, rejected, summary
 
 
+def _materialize_validated_rule(rule: Dict[str, Any], active_by_id: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    proposal_type = str(rule.get("proposal_type", "new_rule"))
+    target_rule_id = str(rule.get("target_rule_id", "")).strip()
+    if proposal_type == "revise_rule" and target_rule_id and target_rule_id in active_by_id:
+        revised = deepcopy(rule)
+        revised["rule_id"] = target_rule_id
+        revised["revised_from_proposal"] = str(rule.get("rule_id", ""))
+        revised["updated_at"] = now_iso()
+        return revised
+    return rule
+
+
 def writeback_model_knowledge(
     project_root: Path,
     trace_id: str,
@@ -593,7 +673,8 @@ def writeback_model_knowledge(
 
     active_by_id = {str(rule.get("rule_id", "")): rule for rule in active_rules}
     for rule in validated_rules:
-        active_by_id[str(rule.get("rule_id", ""))] = rule
+        materialized_rule = _materialize_validated_rule(rule, active_by_id)
+        active_by_id[str(materialized_rule.get("rule_id", ""))] = materialized_rule
 
     rejected_rule_ids = {str(rule.get("rule_id", "")) for rule in rejected_rules}
     validated_rule_ids = {str(rule.get("rule_id", "")) for rule in validated_rules}
@@ -640,3 +721,97 @@ def writeback_model_knowledge(
         "proposed_textual_memories": [item.get("memory_id", "") for item in proposed_memories],
         "turn_id": turn_id,
     }
+
+
+def process_pending_proposals(
+    project_root: Path,
+    trace_id: str,
+) -> Dict[str, Any]:
+    paths = ensure_extra_storage(project_root)
+    pending_files = sorted(
+        path for path in paths["proposals_pending"].glob("*.json")
+        if path.is_file() and not path.name.startswith(".")
+    )
+    summary = {
+        "sweep_executed": True,
+        "sweep_timing": "end_of_task",
+        "effective_scope": "subsequent_turns_only",
+        "proposal_files_seen": len(pending_files),
+        "proposal_files_processed": 0,
+        "proposal_files_rejected": 0,
+        "candidate_rules_generated": 0,
+        "candidate_rules_promoted": 0,
+        "candidate_rules_rejected": 0,
+        "processed_files": [],
+        "rejected_files": [],
+    }
+    if not pending_files:
+        return summary
+
+    extra_state = load_extra_state(project_root)
+    active_rules = list(extra_state.get("active_rules", []))
+    candidate_rules = list(extra_state.get("candidate_rules", []))
+    textual_memory = list(extra_state.get("textual_memory", []))
+
+    for proposal_path in pending_files:
+        try:
+            proposal = _load_proposal_file(proposal_path)
+            rule_proposals = proposal.get("rule_proposals", [])
+            if not isinstance(rule_proposals, list):
+                raise ValueError("rule_proposals must be a list")
+            proposal_knowledge = {
+                "rule_candidates": [item for item in rule_proposals if isinstance(item, dict)],
+                "memory_candidates": [],
+            }
+            result = writeback_model_knowledge(
+                project_root=project_root,
+                trace_id=str(proposal.get("trace_id", trace_id)),
+                turn_id=str(proposal.get("source_turn_id", "proposal")),
+                active_rules=active_rules,
+                candidate_rules=candidate_rules,
+                textual_memory=textual_memory,
+                model_knowledge=proposal_knowledge,
+            )
+            refreshed_state = load_extra_state(project_root)
+            active_rules = list(refreshed_state.get("active_rules", []))
+            candidate_rules = list(refreshed_state.get("candidate_rules", []))
+            textual_memory = list(refreshed_state.get("textual_memory", []))
+            destination = paths["proposals_processed"] / proposal_path.name
+            proposal_path.replace(destination)
+            audit_row = {
+                "ts": now_iso(),
+                "trace_id": str(proposal.get("trace_id", trace_id)),
+                "proposal_id": str(proposal.get("proposal_id", "")),
+                "source_file": str(proposal_path),
+                "processed_file": str(destination),
+                "result": "processed",
+                "candidate_rules_generated": int(result.get("knowledge_writeback", {}).get("candidate_rules_generated", 0)),
+                "candidate_rules_promoted": int(result.get("knowledge_writeback", {}).get("candidate_rules_promoted", 0)),
+                "candidate_rules_rejected": int(result.get("knowledge_writeback", {}).get("candidate_rules_rejected", 0)),
+            }
+            _append_jsonl(paths["proposal_audit"], audit_row)
+            summary["proposal_files_processed"] += 1
+            summary["candidate_rules_generated"] += audit_row["candidate_rules_generated"]
+            summary["candidate_rules_promoted"] += audit_row["candidate_rules_promoted"]
+            summary["candidate_rules_rejected"] += audit_row["candidate_rules_rejected"]
+            summary["processed_files"].append(str(destination))
+        except Exception as exc:
+            destination = paths["proposals_rejected"] / proposal_path.name
+            with suppress(Exception):
+                proposal_path.replace(destination)
+            _append_jsonl(
+                paths["proposal_audit"],
+                {
+                    "ts": now_iso(),
+                    "trace_id": trace_id,
+                    "proposal_id": proposal_path.stem,
+                    "source_file": str(proposal_path),
+                    "processed_file": str(destination),
+                    "result": "rejected",
+                    "reason": str(exc),
+                },
+            )
+            summary["proposal_files_rejected"] += 1
+            summary["rejected_files"].append(str(destination))
+
+    return summary

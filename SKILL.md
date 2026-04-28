@@ -26,7 +26,9 @@ Key rules:
 - the rule frontend always runs first
 - `block` at rule stage ends the turn
 - async/subagent execution is only for low-risk `model_stage`
+- non-blocked turns use a two-call hook pattern: rule-gating hook first, post-model hook after completed `model_stage`
 - new extra knowledge is only written after completed `model_stage`
+- completed `model_stage` must provide reusable knowledge as `rule_candidates` or `memory_candidates` when any reusable lesson exists
 - the main framework agent runs one proposal sweep at task end
 - proposal sweep only affects subsequent turns
 

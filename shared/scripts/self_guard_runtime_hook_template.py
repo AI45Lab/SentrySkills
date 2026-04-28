@@ -2206,10 +2206,13 @@ def _derive_proposal_sweep_effect(proposal_sweep: Dict[str, Any]) -> str:
         return "no_change"
     generated = int(proposal_sweep.get("candidate_rules_generated", 0) or 0)
     promoted = int(proposal_sweep.get("candidate_rules_promoted", 0) or 0)
+    memories = int(proposal_sweep.get("textual_memories_generated", 0) or 0)
     if promoted > 0:
         return "active_rule_updated"
     if generated > 0:
         return "candidate_only"
+    if memories > 0:
+        return "textual_memory_updated"
     return "no_change"
 
 

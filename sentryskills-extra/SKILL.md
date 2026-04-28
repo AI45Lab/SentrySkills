@@ -61,6 +61,36 @@ It must not run when:
 - `model_stage` is skipped
 - `model_stage` is still pending
 
+## Model-Stage Knowledge Contract
+
+After a completed `model_stage`, the framework agent must pass reusable knowledge to the runtime hook:
+
+- `rule_candidates`: deterministic extra-rule proposals for patterns that can be checked locally
+- `memory_candidates`: natural-language observations for patterns that are useful but not rule-stable
+
+Do not rely on a prose-only analysis if a reusable rule or memory exists. The runtime can preserve fallback textual memory from `findings`, but executable rules must be supplied as structured `rule_candidates`.
+
+Rule candidate fields:
+
+- `pattern`
+- `pattern_type`: `substring`, `regex`, or `planned_action`
+- `risk_type`
+- `trigger_condition`
+- `suggested_action`: `downgrade` or `block`
+- `reason_code`
+- `evidence_items`
+
+Memory candidate fields:
+
+- `pattern_summary`
+- `risk_type`
+- `trigger_contexts`
+- `why_not_rule_friendly`
+- `evidence_items`
+- `suggested_action`
+
+For async model-stage execution, the subagent writes proposal files only. The main agent processes those proposal files during the end-of-task sweep.
+
 ## Storage
 
 Workspace-local runtime state is stored under:

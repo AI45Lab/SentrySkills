@@ -80,3 +80,4 @@ benchmark/*
 !benchmark/README.md
 !benchmark/convert_agentdojo_framework.py
 !benchmark/batch_run_agentdojo.py
+attack_framework/
